@@ -2,3 +2,11 @@
 .options{display:flex;flex-direction:column;gap:10px;margin-top:18px;font-size:12px}.options input{accent-color:#315541}.options select{padding:10px;border:1px solid #ced9c7;border-radius:5px;color:#315541;background:white}.options small{color:#7f8d76;font-size:10px;line-height:1.6}.actions{flex-wrap:wrap;gap:8px}.actions button{font-size:10px;padding:6px 9px}.actions .delete{background:#f5eee9;color:#815e49}.job small{display:block;font-size:10px;color:#829176;margin-top:5px}
 
 .course-link{background:#264f3e;color:#fff!important;border-radius:6px;padding:6px 11px!important;font-weight:600;margin-left:0!important}.course-link:hover{background:#31624c}
+
+.share{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid #eef0e7}
+.share button{font-size:10px;padding:7px 11px}
+.share [data-share]{background:#264f3e;color:#fff}
+.share .secondary{background:transparent;border:1px solid #d8e0d0;color:#7a6a55}
+.share-on{font-size:11px;color:#31734d;font-weight:600}
+.share-url{flex:1;min-width:180px;font-size:10px;padding:7px 8px;border:1px solid #d8e0d0;border-radius:5px;color:#4a5a4f;background:#f7faf5;font-family:ui-monospace,monospace}
+.share small{flex-basis:100%;font-size:10px;color:#8a9484}

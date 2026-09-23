@@ -102,7 +102,9 @@ def public(job):
 def jobs(request: Request):
     owner = identity(request)
     with store.connect() as db:
-        return [public(dict(r)) for r in db.execute('SELECT * FROM jobs WHERE owner=? AND expires>? ORDER BY created DESC', (owner, time.time()))]
+        rows = db.execute('SELECT j.*, s.token AS shared FROM jobs j LEFT JOIN shares s ON s.job_id=j.id '
+                          'WHERE j.owner=? AND j.expires>? ORDER BY j.created DESC', (owner, time.time()))
+        return [public(dict(r)) for r in rows]
 
 
 @app.post('/api/jobs', status_code=202)
@@ -159,7 +161,9 @@ async def upload(request: Request, name: str = 'document.pdf', ocr: bool = False
 
 @app.get('/api/jobs/{job_id}')
 def detail(job_id: str, request: Request):
-    return public(get_job(job_id, identity(request)))
+    job = get_job(job_id, identity(request))
+    job['shared'] = share_token(job_id)
+    return public(job)
 
 
 @app.post('/api/jobs/{job_id}/retry')
@@ -212,14 +216,60 @@ def course(job_id: str):
     return FileResponse(STATIC / 'course.html')
 
 
+def read_manifest(job_id):
+    try:
+        return json.loads((store.DATA / job_id / 'output' / 'manifest.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        raise HTTPException(404, 'Course content is not available.')
+
+
 def load_manifest(job_id, owner):
     if get_job(job_id, owner)['status'] != 'completed':
         raise HTTPException(409, 'Conversion is not complete.')
-    path = store.DATA / job_id / 'output' / 'manifest.json'
-    try:
-        return json.loads(path.read_text(encoding='utf-8'))
-    except (OSError, ValueError):
-        raise HTTPException(404, 'Course content is not available.')
+    return read_manifest(job_id)
+
+
+def share_token(job_id):
+    with store.connect() as db:
+        row = db.execute('SELECT token FROM shares WHERE job_id=?', (job_id,)).fetchone()
+    return row['token'] if row else None
+
+
+def share_job(token):
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', token):
+        raise HTTPException(404, 'This shared course is not available.')
+    with store.connect() as db:
+        row = db.execute('SELECT s.job_id FROM shares s JOIN jobs j ON j.id=s.job_id '
+                         'WHERE s.token=? AND j.status=? AND j.expires>?', (token, 'completed', time.time())).fetchone()
+    if not row:
+        raise HTTPException(404, 'This shared course is not available.')
+    return row['job_id']
+
+
+@app.post('/api/jobs/{job_id}/share')
+def publish(job_id: str, request: Request):
+    owner = mutation(request)
+    if get_job(job_id, owner)['status'] != 'completed':
+        raise HTTPException(409, 'Only a completed course can be shared.')
+    with store.connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute('SELECT token FROM shares WHERE job_id=?', (job_id,)).fetchone()
+        token = row['token'] if row else secrets.token_urlsafe(16)
+        if not row:
+            db.execute('INSERT INTO shares(token, job_id, created) VALUES(?,?,?)', (token, job_id, time.time()))
+        # Keep the shared course alive well beyond the 24h private-job retention.
+        db.execute('UPDATE jobs SET expires=max(expires, ?) WHERE id=?', (time.time() + store.SHARE_RETENTION, job_id))
+    base = PUBLIC_ORIGIN or str(request.base_url).rstrip('/')
+    return {'token': token, 'url': f'{base}/learn/{token}'}
+
+
+@app.delete('/api/jobs/{job_id}/share', status_code=204)
+def unpublish(job_id: str, request: Request):
+    owner = mutation(request)
+    get_job(job_id, owner)
+    with store.connect() as db:
+        db.execute('DELETE FROM shares WHERE job_id=?', (job_id,))
+    return Response(status_code=204)
 
 
 @app.get('/api/courses/{job_id}')
@@ -240,6 +290,10 @@ class TutorRequest(BaseModel):
 def ask_tutor(job_id: str, body: TutorRequest, request: Request):
     owner = mutation(request)
     manifest = load_manifest(job_id, owner)
+    return run_tutor(manifest, body)
+
+
+def run_tutor(manifest, body):
     page = tutor.locate_page(manifest, body.page)
     if page is None:
         raise HTTPException(404, 'That page is not part of this course.')
@@ -247,3 +301,45 @@ def ask_tutor(job_id: str, body: TutorRequest, request: Request):
         return tutor.answer(body.question, manifest.get('title', 'this textbook'), page, body.history, body.mode)
     except tutor.TutorError as exc:
         raise HTTPException(503, exc.message)
+
+
+# ---- Public sharing: students open /learn/{token} with no login ----
+
+@app.get('/learn/{token}')
+def learn(token: str):
+    return FileResponse(STATIC / 'course.html')
+
+
+@app.get('/api/shared/{token}')
+def shared_course(token: str):
+    course = builder.build_course(read_manifest(share_job(token)))
+    course['tutor'] = tutor.config()
+    course['shared'] = True
+    return course
+
+
+@app.get('/shared/{token}/{filename}')
+def shared_asset(token: str, filename: str):
+    job_id = share_job(token)
+    if not re.fullmatch(r'page-[1-9][0-9]*\.png', filename):
+        raise HTTPException(404, 'Page not found.')
+    path = store.DATA / job_id / 'output' / filename
+    if not path.is_file():
+        raise HTTPException(404, 'Page not found.')
+    return FileResponse(path, headers={'Content-Security-Policy': "default-src 'none'; img-src 'self'; base-uri 'none'; frame-ancestors 'self'; sandbox allow-same-origin"})
+
+
+@app.post('/api/shared/{token}/tutor')
+def shared_tutor(token: str, body: TutorRequest, request: Request):
+    mutation(request)  # CSRF/origin using the visitor's own session, not ownership
+    job_id = share_job(token)
+    ip = hashlib.sha256((request.client.host if request.client else 'unknown').encode()).hexdigest()
+    now = time.time()
+    with store.connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        per_ip = db.execute('SELECT count(*) FROM tutor_calls WHERE token=? AND ip=? AND created>?', (token, ip, now - 86400)).fetchone()[0]
+        per_share = db.execute('SELECT count(*) FROM tutor_calls WHERE token=? AND created>?', (token, now - 86400)).fetchone()[0]
+        if per_ip >= store.SHARE_TUTOR_PER_IP or per_share >= store.SHARE_TUTOR_PER_DAY:
+            raise HTTPException(429, 'The tutor has reached its daily limit for this shared course. Please try again later.')
+        db.execute('INSERT INTO tutor_calls(token, ip, created) VALUES(?,?,?)', (token, ip, now))
+    return run_tutor(read_manifest(job_id), body)
