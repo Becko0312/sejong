@@ -1,14 +1,17 @@
 """AI tutor for the course experience (Book2Course stage 3).
 
-Unlike the converter, this feature intentionally uses the Anthropic API, so it
-requires an ANTHROPIC_API_KEY and is billed per use. It is fully optional: with
-no key configured the course still works and the tutor panel reports itself
-offline. Book text reaching this module is OCR/extracted from an untrusted PDF,
-so it is passed to the model strictly as reference DATA, never as instructions.
+Provider-pluggable: TUTOR_PROVIDER selects "gemini" (Google Generative Language
+REST API, default when a Gemini key is present) or "anthropic". Unlike the
+converter, this feature calls a paid model API and needs a key; it is fully
+optional, and with no key the course still works and the tutor reports offline.
+Book text reaching this module is OCR/extracted from an untrusted PDF, so it is
+passed to the model strictly as reference DATA, never as instructions.
 """
 import os
 
-MODEL = os.getenv('TUTOR_MODEL', 'claude-opus-5')
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
+ANTHROPIC_MODEL = os.getenv('TUTOR_MODEL', 'claude-opus-5')
 EFFORT = os.getenv('TUTOR_EFFORT', 'low')
 MAX_TOKENS = int(os.getenv('TUTOR_MAX_TOKENS', '1024'))
 MAX_HISTORY = 10
@@ -34,8 +37,21 @@ SYSTEM = (
 )
 
 
+def provider():
+    explicit = os.getenv('TUTOR_PROVIDER', '').strip().lower()
+    if explicit:
+        return explicit
+    return 'gemini' if os.getenv('GEMINI_API_KEY') else 'anthropic'
+
+
+def model_name():
+    return GEMINI_MODEL if provider() == 'gemini' else ANTHROPIC_MODEL
+
+
 def enabled():
-    """True when the tutor can run: an SDK is importable and a credential exists."""
+    """True when the selected provider has a credential and its client is usable."""
+    if provider() == 'gemini':
+        return bool(os.getenv('GEMINI_API_KEY'))
     if not (os.getenv('ANTHROPIC_API_KEY') or os.getenv('ANTHROPIC_AUTH_TOKEN')):
         return False
     try:
@@ -46,7 +62,8 @@ def enabled():
 
 
 def config():
-    return {'enabled': enabled(), 'model': MODEL if enabled() else None}
+    on = enabled()
+    return {'enabled': on, 'provider': provider() if on else None, 'model': model_name() if on else None}
 
 
 def _page_context(book_title, page):
@@ -62,8 +79,23 @@ def _page_context(book_title, page):
     return f"{header}\n\n<page_text>\n{text}\n</page_text>"
 
 
+def _messages(question, book_title, page, history):
+    """Role-tagged turns (user/assistant) ending with the grounded question."""
+    messages = []
+    for turn in (history or [])[-MAX_HISTORY:]:
+        role = turn.get('role')
+        content = (turn.get('content') or '').strip()[:MAX_QUESTION]
+        if role in {'user', 'assistant'} and content:
+            messages.append({'role': role, 'content': content})
+    # Both providers require the conversation to open on a user turn.
+    while messages and messages[0]['role'] != 'user':
+        messages.pop(0)
+    messages.append({'role': 'user', 'content': f"{_page_context(book_title, page)}\n\nStudent question:\n{question}"})
+    return messages
+
+
 def answer(question, book_title, page, history=None):
-    """Return {'reply': str} for a student question about the current page.
+    """Return {'reply': str, 'model': str} for a student question about the page.
 
     Raises TutorError with a user-safe message on misconfiguration or API failure.
     """
@@ -74,23 +106,50 @@ def answer(question, book_title, page, history=None):
         raise TutorError('That question is too long. Please shorten it.')
     if not enabled():
         raise TutorError('The AI tutor is not configured on this server yet.')
+    messages = _messages(question, book_title, page, history)
+    reply, used = _gemini(messages) if provider() == 'gemini' else _anthropic(messages)
+    reply = (reply or '').strip()
+    if not reply:
+        raise TutorError('The tutor could not respond right now. Please try again.')
+    return {'reply': reply, 'model': used}
+
+
+def _gemini(messages):
+    import requests
+    key = os.getenv('GEMINI_API_KEY')
+    body = {
+        'system_instruction': {'parts': [{'text': SYSTEM}]},
+        'contents': [{'role': 'model' if m['role'] == 'assistant' else 'user', 'parts': [{'text': m['content']}]} for m in messages],
+        'generationConfig': {'maxOutputTokens': MAX_TOKENS, 'temperature': 0.4},
+    }
+    if '2.5' in GEMINI_MODEL:
+        # Keep the tutor fast and cheap; no visible reasoning is needed for tutoring.
+        body['generationConfig']['thinkingConfig'] = {'thinkingBudget': 0}
+    try:
+        response = requests.post(GEMINI_ENDPOINT.format(model=GEMINI_MODEL),
+                                 params={'key': key}, json=body, timeout=45)
+    except requests.RequestException as exc:
+        raise TutorError('The tutor could not respond right now. Please try again.') from exc
+    if response.status_code in (401, 403):
+        raise TutorError('The AI tutor credentials are invalid.')
+    if response.status_code == 429:
+        raise TutorError('The tutor is busy right now. Please try again in a moment.')
+    if response.status_code != 200:
+        raise TutorError('The tutor could not respond right now. Please try again.')
+    data = response.json()
+    if data.get('promptFeedback', {}).get('blockReason'):
+        raise TutorError('The tutor could not answer that. Please rephrase your question.')
+    candidates = data.get('candidates') or []
+    parts = candidates[0].get('content', {}).get('parts', []) if candidates else []
+    return ''.join(p.get('text', '') for p in parts), data.get('modelVersion', GEMINI_MODEL)
+
+
+def _anthropic(messages):
     import anthropic
-
-    messages = []
-    for turn in (history or [])[-MAX_HISTORY:]:
-        role = turn.get('role')
-        content = (turn.get('content') or '').strip()[:MAX_QUESTION]
-        if role in {'user', 'assistant'} and content:
-            messages.append({'role': role, 'content': content})
-    # Ground every question in the page the student is currently viewing.
-    messages.append({'role': 'user', 'content': f"{_page_context(book_title, page)}\n\nStudent question:\n{question}"})
-    if not messages or messages[0]['role'] != 'user':
-        messages.insert(0, {'role': 'user', 'content': question})
-
     try:
         client = anthropic.Anthropic()
         response = client.messages.create(
-            model=MODEL,
+            model=ANTHROPIC_MODEL,
             max_tokens=MAX_TOKENS,
             system=SYSTEM,
             output_config={'effort': EFFORT},
@@ -102,11 +161,7 @@ def answer(question, book_title, page, history=None):
         raise TutorError('The tutor is busy right now. Please try again in a moment.')
     except anthropic.APIError as exc:
         raise TutorError('The tutor could not respond right now. Please try again.') from exc
-
-    reply = ''.join(block.text for block in response.content if block.type == 'text').strip()
-    if not reply:
-        raise TutorError('The tutor could not respond right now. Please try again.')
-    return {'reply': reply, 'model': response.model}
+    return ''.join(block.text for block in response.content if block.type == 'text'), response.model
 
 
 class TutorError(Exception):

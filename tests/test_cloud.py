@@ -110,8 +110,9 @@ def test_cloud_course_and_tutor(cloud, monkeypatch):
     assert run_once(store) == 0
     assert a.get(f'/course/{job["id"]}').status_code == 200
     capture = {}
+    monkeypatch.setenv('TUTOR_PROVIDER', 'anthropic')
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'sk-ant-test')
-    monkeypatch.setattr(tutor, 'enabled', lambda: True)
+    monkeypatch.delenv('GEMINI_API_KEY', raising=False)
     import anthropic
 
     class Messages:

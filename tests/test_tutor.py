@@ -41,19 +41,55 @@ def fake_client(capture):
 
 
 def enable_tutor(monkeypatch, capture=None):
+    """Enable the Anthropic provider with a mocked client (no tokens spent)."""
     capture = {} if capture is None else capture
+    monkeypatch.setenv('TUTOR_PROVIDER', 'anthropic')
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'sk-ant-test')
-    monkeypatch.setattr(tutor, 'enabled', lambda: True)
+    monkeypatch.delenv('GEMINI_API_KEY', raising=False)
     import anthropic
     monkeypatch.setattr(anthropic, 'Anthropic', lambda *a, **k: fake_client(capture))
     return capture
 
 
+def enable_gemini(monkeypatch, capture=None):
+    """Enable the Gemini provider with a mocked requests.post (no tokens spent)."""
+    capture = {} if capture is None else capture
+    monkeypatch.setenv('TUTOR_PROVIDER', 'gemini')
+    monkeypatch.setenv('GEMINI_API_KEY', 'AQ.test')
+    import requests
+
+    def fake_post(url, params=None, json=None, timeout=None):
+        capture.update(url=url, params=params, body=json)
+        return types.SimpleNamespace(status_code=200, json=lambda: {
+            'candidates': [{'content': {'parts': [{'text': '좋아요! (johayo) — good job. 🌱'}]}}],
+            'modelVersion': 'gemini-2.5-flash'})
+    monkeypatch.setattr(requests, 'post', fake_post)
+    return capture
+
+
 def test_enabled_reflects_credentials(monkeypatch):
+    monkeypatch.delenv('TUTOR_PROVIDER', raising=False)
+    monkeypatch.delenv('GEMINI_API_KEY', raising=False)
     monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
     monkeypatch.delenv('ANTHROPIC_AUTH_TOKEN', raising=False)
     assert tutor.enabled() is False
-    assert tutor.config() == {'enabled': False, 'model': None}
+    assert tutor.config() == {'enabled': False, 'provider': None, 'model': None}
+
+
+def test_gemini_provider_grounds_and_maps_roles(monkeypatch):
+    capture = enable_gemini(monkeypatch)
+    assert tutor.enabled() is True
+    assert tutor.config()['provider'] == 'gemini'
+    page = {'number': 2, 'page_count': 5, 'text': '감사합니다 thank you', 'text_source': 'embedded'}
+    history = [{'role': 'user', 'content': 'hi'}, {'role': 'assistant', 'content': 'earlier reply'}]
+    result = tutor.answer('What is on this page?', 'Sejong Korean 1', page, history)
+    assert '좋아요' in result['reply']
+    contents = capture['body']['contents']
+    assert contents[0]['role'] == 'user'
+    assert contents[1]['role'] == 'model'  # assistant mapped to Gemini's "model"
+    assert '감사합니다' in contents[-1]['parts'][0]['text'] and '<page_text>' in contents[-1]['parts'][0]['text']
+    assert capture['body']['system_instruction']['parts'][0]['text'] == tutor.SYSTEM
+    assert capture['params']['key'] == 'AQ.test'
 
 
 def test_answer_grounds_in_page_and_bounds_history(monkeypatch):
@@ -114,4 +150,4 @@ def test_course_reader_served(course):
 def test_session_reports_tutor(course, monkeypatch):
     a, _, _, _, _ = course
     monkeypatch.setattr(tutor, 'enabled', lambda: False)
-    assert a.get('/api/session').json()['tutor'] == {'enabled': False, 'model': None}
+    assert a.get('/api/session').json()['tutor'] == {'enabled': False, 'provider': None, 'model': None}
