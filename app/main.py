@@ -1,4 +1,4 @@
-"""HTTP service: accepts bounded raw uploads; never parses untrusted PDFs."""
+"""Book2Course platform: login/roles, admin-built courses, a client catalog, tutor."""
 import asyncio
 from contextlib import asynccontextmanager
 import hashlib
@@ -6,37 +6,18 @@ import json
 import os
 from pathlib import Path
 import re
-import secrets
 import shutil
 import time
 import uuid
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from app import builder, store, tutor
+from app import auth, builder, store, tutor
 
 PUBLIC_ORIGIN = os.getenv('PUBLIC_ORIGIN', '').rstrip('/')
-COOKIE = 'sejong_session'
 STATIC = Path(__file__).parent / 'static'
-
-
-def identity(request):
-    token = request.cookies.get(COOKIE, '')
-    if not re.fullmatch(r'[0-9a-f]{64}', token):
-        raise HTTPException(401, 'Open the converter to start a private session.')
-    return hashlib.sha256(token.encode()).hexdigest()
-
-
-def mutation(request):
-    owner = identity(request)
-    if not secrets.compare_digest(request.headers.get('x-csrf-token', ''), owner):
-        raise HTTPException(403, 'Session check failed. Refresh the page and try again.')
-    origin = request.headers.get('origin')
-    expected = PUBLIC_ORIGIN or str(request.base_url).rstrip('/')
-    if origin and origin != expected:
-        raise HTTPException(403, 'Cross-site upload blocked.')
-    return owner
+OCR_LANGUAGES = {'eng', 'kor', 'mon', 'kor+mon+eng'}
 
 
 @asynccontextmanager
@@ -44,10 +25,11 @@ async def lifespan(app):
     if PUBLIC_ORIGIN and not PUBLIC_ORIGIN.startswith('https://'):
         raise RuntimeError('Public deployments require an HTTPS PUBLIC_ORIGIN.')
     store.initialize()
+    auth.seed_admin()
     yield
 
 
-app = FastAPI(title='Sejong PDF Studio', lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title='Book2Course', lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount('/static', StaticFiles(directory=STATIC), name='static')
 
 
@@ -63,6 +45,48 @@ async def headers(request, call_next):
     return response
 
 
+# ---- Auth helpers ----
+
+def current(request):
+    user = auth.session(request)
+    if not user:
+        raise HTTPException(401, 'Please sign in.')
+    return user
+
+
+def check_csrf(request, user):
+    if not auth.csrf_ok(request, user):
+        raise HTTPException(403, 'Session check failed. Refresh the page and try again.')
+    origin = request.headers.get('origin')
+    expected = PUBLIC_ORIGIN or str(request.base_url).rstrip('/')
+    if origin and origin != expected:
+        raise HTTPException(403, 'Cross-site request blocked.')
+
+
+def require_admin(request, csrf=True):
+    user = current(request)
+    if user['role'] != 'admin':
+        raise HTTPException(403, 'This action is for administrators only.')
+    if csrf:
+        check_csrf(request, user)
+    return user
+
+
+def account(user):
+    return {'authenticated': True, 'username': user['username'], 'role': user['role'],
+            'csrf': hashlib.sha256(user['token'].encode()).hexdigest() if 'token' in user else user['csrf'],
+            'tutor': tutor.config()}
+
+
+def set_cookie(response, token):
+    response.set_cookie(auth.COOKIE, token, httponly=True, secure=bool(PUBLIC_ORIGIN), samesite='strict', max_age=store.SESSION_TTL)
+
+
+class Credentials(BaseModel):
+    username: str = Field(max_length=32)
+    password: str = Field(max_length=200)
+
+
 @app.get('/')
 def home():
     return FileResponse(STATIC / 'index.html')
@@ -75,42 +99,116 @@ def health():
     return {'status': 'ok'}
 
 
-@app.get('/api/session')
-def session(request: Request, response: Response):
-    token = request.cookies.get(COOKIE, '')
-    if not re.fullmatch(r'[0-9a-f]{64}', token):
-        token = secrets.token_hex(32)
-    response.set_cookie(COOKIE, token, httponly=True, secure=bool(PUBLIC_ORIGIN), samesite='strict', max_age=30*86400)
-    return {'csrf': hashlib.sha256(token.encode()).hexdigest(), 'max_upload_mb': store.MAX_BYTES // 1024 // 1024,
-            'retention_hours': store.RETENTION // 3600, 'max_pages': int(os.getenv('MAX_PAGES', '500')),
-            'tutor': tutor.config()}
+@app.get('/api/me')
+def me(request: Request):
+    user = auth.session(request)
+    if not user:
+        return {'authenticated': False, 'tutor': tutor.config()}
+    return account(user)
 
 
-def get_job(job_id, owner):
+@app.post('/api/register')
+def register(body: Credentials, request: Request):
+    check_csrf_origin(request)
+    try:
+        auth.register(body.username, body.password, 'client')
+        token, role = auth.login(body.username, body.password)
+    except auth.AuthError as exc:
+        raise HTTPException(exc.code, exc.message)
+    response = JSONResponse(account({'username': body.username.strip(), 'role': role, 'token': token}))
+    set_cookie(response, token)
+    return response
+
+
+@app.post('/api/login')
+def do_login(body: Credentials, request: Request):
+    check_csrf_origin(request)
+    try:
+        token, role = auth.login(body.username, body.password)
+    except auth.AuthError as exc:
+        raise HTTPException(exc.code, exc.message)
+    response = JSONResponse(account({'username': (body.username or '').strip(), 'role': role, 'token': token}))
+    set_cookie(response, token)
+    return response
+
+
+@app.post('/api/logout')
+def do_logout(request: Request):
+    user = auth.session(request)
+    if user:
+        auth.logout(user['token'])
+    response = Response(status_code=204)
+    response.delete_cookie(auth.COOKIE)
+    return response
+
+
+def check_csrf_origin(request):
+    # Login/register have no session yet, so only the same-origin check applies.
+    origin = request.headers.get('origin')
+    expected = PUBLIC_ORIGIN or str(request.base_url).rstrip('/')
+    if origin and origin != expected:
+        raise HTTPException(403, 'Cross-site request blocked.')
+
+
+# ---- Courses: admin builds them, everyone signed in can study available ones ----
+
+CATALOG_FIELDS = ('id', 'title', 'name', 'source_lang', 'target_lang', 'description', 'status', 'available', 'created')
+
+
+def catalog_item(job):
+    item = {k: job.get(k) for k in CATALOG_FIELDS}
+    item['title'] = job.get('title') or job.get('name') or 'Untitled course'
+    return item
+
+
+@app.get('/api/catalog')
+def catalog(request: Request):
+    current(request)  # any signed-in user
     with store.connect() as db:
-        row = db.execute('SELECT * FROM jobs WHERE id=? AND owner=? AND expires>?', (job_id, owner, time.time())).fetchone()
+        rows = db.execute('SELECT * FROM jobs WHERE status=? AND available=1 AND expires>? ORDER BY created DESC',
+                          ('completed', time.time())).fetchall()
+    return [catalog_item(dict(r)) for r in rows]
+
+
+@app.get('/api/admin/courses')
+def admin_courses(request: Request):
+    require_admin(request, csrf=False)
+    with store.connect() as db:
+        rows = db.execute('SELECT * FROM jobs WHERE expires>? ORDER BY created DESC', (time.time(),)).fetchall()
+    items = []
+    for r in rows:
+        job = dict(r)
+        item = catalog_item(job)
+        item.update(done=job.get('done'), total=job.get('total'), error=job.get('error'),
+                    attempts=job.get('attempts'), ocr=job.get('ocr'))
+        items.append(item)
+    return items
+
+
+def viewable(job_id, user):
+    with store.connect() as db:
+        row = db.execute('SELECT * FROM jobs WHERE id=? AND status=? AND expires>?', (job_id, 'completed', time.time())).fetchone()
     if not row:
-        raise HTTPException(404, 'Job not found or expired.')
+        raise HTTPException(404, 'Course not found.')
+    job = dict(row)
+    if user['role'] != 'admin' and not job['available']:
+        raise HTTPException(404, 'Course not found.')
+    return job
+
+
+def admin_job(job_id):
+    with store.connect() as db:
+        row = db.execute('SELECT * FROM jobs WHERE id=? AND expires>?', (job_id, time.time())).fetchone()
+    if not row:
+        raise HTTPException(404, 'Course not found.')
     return dict(row)
 
 
-def public(job):
-    return {k: v for k, v in job.items() if k != 'owner'}
-
-
-@app.get('/api/jobs')
-def jobs(request: Request):
-    owner = identity(request)
-    with store.connect() as db:
-        rows = db.execute('SELECT j.*, s.token AS shared FROM jobs j LEFT JOIN shares s ON s.job_id=j.id '
-                          'WHERE j.owner=? AND j.expires>? ORDER BY j.created DESC', (owner, time.time()))
-        return [public(dict(r)) for r in rows]
-
-
 @app.post('/api/jobs', status_code=202)
-async def upload(request: Request, name: str = 'document.pdf', ocr: bool = False, languages: str = 'eng'):
-    owner = mutation(request)
-    if languages not in {'eng', 'kor', 'mon', 'kor+mon+eng'}:
+async def upload(request: Request, name: str = 'document.pdf', ocr: bool = False, languages: str = 'eng',
+                 source_lang: str = '', target_lang: str = '', title: str = '', description: str = ''):
+    admin = require_admin(request)
+    if languages not in OCR_LANGUAGES:
         raise HTTPException(400, 'Unsupported OCR languages.')
     if request.headers.get('content-type', '').split(';')[0] != 'application/pdf':
         raise HTTPException(415, 'Send a PDF as the request body.')
@@ -120,22 +218,20 @@ async def upload(request: Request, name: str = 'document.pdf', ocr: bool = False
         raise HTTPException(400, 'Invalid upload length.')
     if length < 0 or length > store.MAX_BYTES:
         raise HTTPException(413, 'The file exceeds the upload limit.')
-    ip = hashlib.sha256((request.client.host if request.client else 'unknown').encode()).hexdigest()
     job_id, now = uuid.uuid4().hex, time.time()
     with store.connect() as db:
         db.execute('BEGIN IMMEDIATE')
         active = db.execute("SELECT count(*) FROM jobs WHERE status IN ('uploading','queued','processing')").fetchone()[0]
-        owned = db.execute('SELECT count(*) FROM jobs WHERE owner=? AND expires>?', (owner, now)).fetchone()[0]
-        requests = db.execute('SELECT count(*) FROM requests WHERE ip=? AND created>?', (ip, now-86400)).fetchone()[0]
-        if active >= store.MAX_ACTIVE or owned >= store.PER_SESSION or requests >= store.PER_IP:
-            raise HTTPException(429, 'Conversion limit reached. Please try again later.')
-        # Reserve enough free disk for every active job's maximum output and archive.
+        if active >= store.MAX_ACTIVE:
+            raise HTTPException(429, 'Too many conversions running. Please try again shortly.')
         reserve = (active + 1) * (store.MAX_BYTES + 2 * int(os.getenv('MAX_OUTPUT_MB', '1024')) * 1024**2) + 1024**3
         if shutil.disk_usage(store.DATA).free < reserve:
             raise HTTPException(503, 'Storage is busy. Please try again later.')
-        db.execute('INSERT INTO jobs(id,name,status,created,owner,expires,ocr,languages) VALUES(?,?,?,?,?,?,?,?)',
-                   (job_id, Path(name.replace('\\', '/')).name[:200] or 'document.pdf', 'uploading', now, owner, now+store.RETENTION, int(ocr), languages))
-        db.execute('INSERT INTO requests VALUES(?,?)', (ip, now))
+        db.execute('INSERT INTO jobs(id,name,status,created,owner,expires,ocr,languages,title,source_lang,target_lang,description,available) '
+                   'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1)',
+                   (job_id, Path(name.replace('\\', '/')).name[:200] or 'document.pdf', 'uploading', now, admin['username'],
+                    now + store.COURSE_RETENTION, int(ocr), languages, title[:200] or None, source_lang[:40] or None,
+                    target_lang[:40] or None, description[:1000] or None))
     folder = store.DATA / job_id
     try:
         folder.mkdir()
@@ -156,63 +252,62 @@ async def upload(request: Request, name: str = 'document.pdf', ocr: bool = False
         with store.connect() as db:
             db.execute('DELETE FROM jobs WHERE id=?', (job_id,))
         raise
-    return public(get_job(job_id, owner))
+    return catalog_item(admin_job(job_id))
 
 
-@app.get('/api/jobs/{job_id}')
-def detail(job_id: str, request: Request):
-    job = get_job(job_id, identity(request))
-    job['shared'] = share_token(job_id)
-    return public(job)
+class CourseUpdate(BaseModel):
+    available: bool | None = None
+    title: str | None = Field(None, max_length=200)
+    source_lang: str | None = Field(None, max_length=40)
+    target_lang: str | None = Field(None, max_length=40)
+    description: str | None = Field(None, max_length=1000)
+
+
+@app.patch('/api/jobs/{job_id}')
+def edit_course(job_id: str, body: CourseUpdate, request: Request):
+    require_admin(request)
+    admin_job(job_id)
+    fields = {k: (int(v) if k == 'available' else v) for k, v in body.model_dump(exclude_none=True).items()}
+    if fields:
+        store.update(job_id, **fields)
+    return catalog_item(admin_job(job_id))
 
 
 @app.post('/api/jobs/{job_id}/retry')
 def retry(job_id: str, request: Request):
-    owner = mutation(request)
-    get_job(job_id, owner)
+    require_admin(request)
+    admin_job(job_id)
     with store.connect() as db:
         db.execute('BEGIN IMMEDIATE')
         active = db.execute("SELECT count(*) FROM jobs WHERE status IN ('uploading','queued','processing')").fetchone()[0]
         if active >= store.MAX_ACTIVE:
             raise HTTPException(429, 'Conversion queue is full. Please retry later.')
-        changed = db.execute("UPDATE jobs SET status='queued', error=NULL WHERE id=? AND owner=? AND status='failed' AND attempts<3", (job_id, owner)).rowcount
+        changed = db.execute("UPDATE jobs SET status='queued', error=NULL WHERE id=? AND status='failed' AND attempts<3", (job_id,)).rowcount
     if not changed:
-        raise HTTPException(409, 'Only failed jobs with fewer than three attempts can be retried.')
-    return public(get_job(job_id, owner))
+        raise HTTPException(409, 'Only failed courses with fewer than three attempts can be retried.')
+    return catalog_item(admin_job(job_id))
 
 
 @app.delete('/api/jobs/{job_id}', status_code=204)
 def delete(job_id: str, request: Request):
-    owner = mutation(request)
-    get_job(job_id, owner)
-    # The worker owns removal, avoiding races with in-flight PDF processes.
+    require_admin(request)
+    admin_job(job_id)
     with store.connect() as db:
-        db.execute('UPDATE jobs SET expires=0 WHERE id=? AND owner=?', (job_id, owner))
+        db.execute('UPDATE jobs SET expires=0, available=0 WHERE id=?', (job_id,))
     return Response(status_code=204)
 
 
 @app.get('/api/jobs/{job_id}/download')
 def download(job_id: str, request: Request):
-    if get_job(job_id, identity(request))['status'] != 'completed':
+    require_admin(request, csrf=False)
+    if admin_job(job_id)['status'] != 'completed':
         raise HTTPException(409, 'Conversion is not complete.')
     return FileResponse(store.DATA / job_id / 'book.zip', filename='converted-book.zip', media_type='application/zip')
 
 
-@app.get('/books/{job_id}/{filename}')
-def asset(job_id: str, filename: str, request: Request):
-    if get_job(job_id, identity(request))['status'] != 'completed':
-        raise HTTPException(409, 'Conversion is not complete.')
-    if not re.fullmatch(r'(index\.html|manifest\.json|page-[1-9][0-9]*\.(html|png|json))', filename):
-        raise HTTPException(404, 'Page not found.')
-    path = store.DATA / job_id / 'output' / filename
-    if not path.is_file():
-        raise HTTPException(404, 'Page not found.')
-    return FileResponse(path, headers={'Content-Security-Policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'self'; sandbox allow-same-origin"})
-
-
 @app.get('/course/{job_id}')
 def course(job_id: str):
-    # The reader is a static app; ownership is enforced by the data endpoints it calls.
+    # Static reader shell; the data endpoints it calls enforce sign-in and availability.
     return FileResponse(STATIC / 'course.html')
 
 
@@ -223,60 +318,26 @@ def read_manifest(job_id):
         raise HTTPException(404, 'Course content is not available.')
 
 
-def load_manifest(job_id, owner):
-    if get_job(job_id, owner)['status'] != 'completed':
-        raise HTTPException(409, 'Conversion is not complete.')
-    return read_manifest(job_id)
-
-
-def share_token(job_id):
-    with store.connect() as db:
-        row = db.execute('SELECT token FROM shares WHERE job_id=?', (job_id,)).fetchone()
-    return row['token'] if row else None
-
-
-def share_job(token):
-    if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', token):
-        raise HTTPException(404, 'This shared course is not available.')
-    with store.connect() as db:
-        row = db.execute('SELECT s.job_id FROM shares s JOIN jobs j ON j.id=s.job_id '
-                         'WHERE s.token=? AND j.status=? AND j.expires>?', (token, 'completed', time.time())).fetchone()
-    if not row:
-        raise HTTPException(404, 'This shared course is not available.')
-    return row['job_id']
-
-
-@app.post('/api/jobs/{job_id}/share')
-def publish(job_id: str, request: Request):
-    owner = mutation(request)
-    if get_job(job_id, owner)['status'] != 'completed':
-        raise HTTPException(409, 'Only a completed course can be shared.')
-    with store.connect() as db:
-        db.execute('BEGIN IMMEDIATE')
-        row = db.execute('SELECT token FROM shares WHERE job_id=?', (job_id,)).fetchone()
-        token = row['token'] if row else secrets.token_urlsafe(16)
-        if not row:
-            db.execute('INSERT INTO shares(token, job_id, created) VALUES(?,?,?)', (token, job_id, time.time()))
-        # Keep the shared course alive well beyond the 24h private-job retention.
-        db.execute('UPDATE jobs SET expires=max(expires, ?) WHERE id=?', (time.time() + store.SHARE_RETENTION, job_id))
-    base = PUBLIC_ORIGIN or str(request.base_url).rstrip('/')
-    return {'token': token, 'url': f'{base}/learn/{token}'}
-
-
-@app.delete('/api/jobs/{job_id}/share', status_code=204)
-def unpublish(job_id: str, request: Request):
-    owner = mutation(request)
-    get_job(job_id, owner)
-    with store.connect() as db:
-        db.execute('DELETE FROM shares WHERE job_id=?', (job_id,))
-    return Response(status_code=204)
-
-
 @app.get('/api/courses/{job_id}')
 def course_structure(job_id: str, request: Request):
-    course = builder.build_course(load_manifest(job_id, identity(request)))
+    job = viewable(job_id, current(request))
+    course = builder.build_course(read_manifest(job_id))
+    course['title'] = job.get('title') or course.get('title')
+    course['source_lang'] = job.get('source_lang')
+    course['target_lang'] = job.get('target_lang')
     course['tutor'] = tutor.config()
     return course
+
+
+@app.get('/books/{job_id}/{filename}')
+def asset(job_id: str, filename: str, request: Request):
+    viewable(job_id, current(request))
+    if not re.fullmatch(r'(index\.html|manifest\.json|page-[1-9][0-9]*\.(html|png|json))', filename):
+        raise HTTPException(404, 'Page not found.')
+    path = store.DATA / job_id / 'output' / filename
+    if not path.is_file():
+        raise HTTPException(404, 'Page not found.')
+    return FileResponse(path, headers={'Content-Security-Policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'self'; sandbox allow-same-origin"})
 
 
 class TutorRequest(BaseModel):
@@ -288,58 +349,22 @@ class TutorRequest(BaseModel):
 
 @app.post('/api/tutor/{job_id}')
 def ask_tutor(job_id: str, body: TutorRequest, request: Request):
-    owner = mutation(request)
-    manifest = load_manifest(job_id, owner)
-    return run_tutor(manifest, body)
-
-
-def run_tutor(manifest, body):
+    user = current(request)
+    check_csrf(request, user)
+    job = viewable(job_id, user)
+    if user['role'] != 'admin':
+        now = time.time()
+        with store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            used = db.execute('SELECT count(*) FROM usage WHERE subject=? AND created>?', (user['username'], now - 86400)).fetchone()[0]
+            if used >= store.CLIENT_TUTOR_PER_DAY:
+                raise HTTPException(429, 'You have reached today\'s tutor limit. Please continue tomorrow.')
+            db.execute('INSERT INTO usage(subject, created) VALUES(?,?)', (user['username'], now))
+    manifest = read_manifest(job_id)
     page = tutor.locate_page(manifest, body.page)
     if page is None:
         raise HTTPException(404, 'That page is not part of this course.')
     try:
-        return tutor.answer(body.question, manifest.get('title', 'this textbook'), page, body.history, body.mode)
+        return tutor.answer(body.question, job.get('title') or manifest.get('title', 'this textbook'), page, body.history, body.mode)
     except tutor.TutorError as exc:
         raise HTTPException(503, exc.message)
-
-
-# ---- Public sharing: students open /learn/{token} with no login ----
-
-@app.get('/learn/{token}')
-def learn(token: str):
-    return FileResponse(STATIC / 'course.html')
-
-
-@app.get('/api/shared/{token}')
-def shared_course(token: str):
-    course = builder.build_course(read_manifest(share_job(token)))
-    course['tutor'] = tutor.config()
-    course['shared'] = True
-    return course
-
-
-@app.get('/shared/{token}/{filename}')
-def shared_asset(token: str, filename: str):
-    job_id = share_job(token)
-    if not re.fullmatch(r'page-[1-9][0-9]*\.png', filename):
-        raise HTTPException(404, 'Page not found.')
-    path = store.DATA / job_id / 'output' / filename
-    if not path.is_file():
-        raise HTTPException(404, 'Page not found.')
-    return FileResponse(path, headers={'Content-Security-Policy': "default-src 'none'; img-src 'self'; base-uri 'none'; frame-ancestors 'self'; sandbox allow-same-origin"})
-
-
-@app.post('/api/shared/{token}/tutor')
-def shared_tutor(token: str, body: TutorRequest, request: Request):
-    mutation(request)  # CSRF/origin using the visitor's own session, not ownership
-    job_id = share_job(token)
-    ip = hashlib.sha256((request.client.host if request.client else 'unknown').encode()).hexdigest()
-    now = time.time()
-    with store.connect() as db:
-        db.execute('BEGIN IMMEDIATE')
-        per_ip = db.execute('SELECT count(*) FROM tutor_calls WHERE token=? AND ip=? AND created>?', (token, ip, now - 86400)).fetchone()[0]
-        per_share = db.execute('SELECT count(*) FROM tutor_calls WHERE token=? AND created>?', (token, now - 86400)).fetchone()[0]
-        if per_ip >= store.SHARE_TUTOR_PER_IP or per_share >= store.SHARE_TUTOR_PER_DAY:
-            raise HTTPException(429, 'The tutor has reached its daily limit for this shared course. Please try again later.')
-        db.execute('INSERT INTO tutor_calls(token, ip, created) VALUES(?,?,?)', (token, ip, now))
-    return run_tutor(read_manifest(job_id), body)

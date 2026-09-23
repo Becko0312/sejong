@@ -1,0 +1,80 @@
+:root{font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#263e35;background:#f5f7f2;font-synthesis:none}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh}
+button{font:inherit;cursor:pointer;border:0;border-radius:7px;background:#264f3e;color:#fff;padding:11px 16px;font-size:13px}
+button:disabled{opacity:.55;cursor:default}
+a{color:#2b6047}
+h1,h2{font-family:Georgia,serif;font-weight:400;letter-spacing:-.5px}
+
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid #dce2d7;background:#eef1ea;position:sticky;top:0;z-index:5}
+.brand{display:flex;align-items:center;gap:10px;font-size:22px;font-weight:650;color:#22483d;text-decoration:none}
+.brand span{font-family:Georgia,serif;font-weight:400}
+.userbox{display:flex;align-items:center;gap:12px;font-size:12px;color:#5f6d5f}
+.userbox .role{font-size:9px;letter-spacing:1px;text-transform:uppercase;background:#dce7d8;color:#3a5a47;padding:4px 8px;border-radius:20px}
+.userbox .ghost{background:transparent;border:1px solid #cfd9c8;color:#5a6b57}
+
+#main{max-width:1080px;margin:0 auto;padding:32px 24px 60px}
+.view-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+.count{font-size:11px;background:#e7eddf;color:#5a6b57;border-radius:6px;padding:2px 8px;margin-left:6px}
+.ghost{background:transparent;border:1px solid #d3ddcc;color:#5a6b57;font-size:11px;padding:7px 11px}
+.msg{font-size:12px;line-height:1.5;margin:10px 0 0;overflow-wrap:anywhere;color:#7a6a4a}
+.msg.ok{color:#31734d}
+.msg.err{color:#a5462f}
+
+/* Auth */
+#auth-view{display:grid;grid-template-columns:1.1fr .9fr;gap:40px;align-items:center;min-height:70vh}
+.hero .eyebrow{font-size:10px;letter-spacing:2px;font-weight:700;color:#6d846e;margin:0}
+.hero h1{font-size:40px;line-height:1.1;margin:14px 0 16px;color:#20463a}
+.hero .lede{font-size:14px;line-height:1.7;color:#5c6a5c;max-width:440px}
+.auth-card{background:#fff;border:1px solid #dfe5da;border-radius:14px;padding:26px;box-shadow:0 10px 40px rgba(40,60,45,.07)}
+.tabs{display:flex;gap:6px;background:#eef1ea;border-radius:9px;padding:4px;margin-bottom:20px}
+.tab{flex:1;background:transparent;color:#5f6d5f;padding:9px;border-radius:6px;font-size:13px}
+.tab.active{background:#fff;color:#22483d;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+#auth-form{display:flex;flex-direction:column}
+#auth-form label,.add-panel label{font-size:11px;font-weight:600;color:#4a5a4f;margin:12px 0 6px}
+#auth-form input,.add-panel input,.add-panel select{border:1px solid #d3ddcc;border-radius:8px;padding:11px 12px;font:inherit;font-size:14px;color:#28382f;background:#fbfcf9}
+#auth-form input:focus,.add-panel input:focus,.add-panel select:focus{outline:2px solid #487a5b;outline-offset:0}
+#auth-submit,#add-submit{margin-top:18px;padding:12px}
+.hint{font-size:12px;color:#7a8577;margin-top:14px}
+
+/* Catalog */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}
+.course-card{display:flex;flex-direction:column;gap:8px;background:#fff;border:1px solid #dfe5da;border-radius:12px;padding:20px;text-decoration:none;color:inherit;box-shadow:0 3px 12px rgba(40,60,45,.05)}
+.course-card:hover{border-color:#5c8468;box-shadow:0 8px 22px rgba(40,60,45,.1);transform:translateY(-1px)}
+.course-card .langs{font-size:9px;letter-spacing:1px;font-weight:700;color:#7e9573;background:#eef4ea;border-radius:20px;padding:4px 9px;align-self:flex-start}
+.course-card h3{font-family:Georgia,serif;font-weight:400;font-size:19px;margin:2px 0 0;color:#23473a}
+.course-card p{font-size:12px;color:#7a8577;margin:0;line-height:1.55}
+.course-card .go{margin-top:auto;font-size:12px;color:#2b6047;font-weight:600}
+.empty{grid-column:1/-1;border:1px dashed #cfd9c8;border-radius:12px;padding:40px;text-align:center;color:#8a9484;font-size:13px}
+
+/* Admin */
+.admin-grid{display:grid;grid-template-columns:340px 1fr;gap:24px;align-items:start}
+.panel{background:#fff;border:1px solid #dfe5da;border-radius:14px;padding:24px}
+.panel h2{font-size:18px;margin:0 0 16px}
+.add-panel form{display:flex;flex-direction:column}
+.add-panel .row{display:flex;gap:10px}
+.add-panel .row>div{flex:1;display:flex;flex-direction:column}
+.add-panel .opt{font-weight:400;color:#9aa393}
+.check{flex-direction:row!important;align-items:center;gap:8px;font-size:12px!important;margin-top:14px!important;color:#4a5a4f}
+.check input{width:auto}
+.drop{margin-top:14px;border:1.5px dashed #c9d4c1;background:#fafbf7;border-radius:9px;padding:18px;text-align:center;cursor:pointer;position:relative;font-size:12px;color:#7a8577}
+.drop:hover{background:#eef5e9;border-color:#547c5d}
+.drop input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}
+.drop.over{background:#eef5e9;border-color:#547c5d}
+
+.course-row{border:1px solid #dce4d4;border-radius:10px;padding:14px 16px;margin-bottom:10px}
+.course-row .top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.course-row h3{font-size:14px;font-weight:600;margin:0;overflow-wrap:anywhere}
+.course-row .status{font-size:9px;letter-spacing:.8px;text-transform:uppercase;padding:3px 8px;border-radius:20px;white-space:nowrap}
+.status.completed{background:#e2efe4;color:#2f7048}.status.processing,.status.queued,.status.uploading{background:#eef0d9;color:#7a6f30}.status.failed{background:#f6e6df;color:#9a4630}
+.course-row .meta{font-size:11px;color:#8a9484;margin:6px 0 0}
+.course-row .row-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
+.course-row .row-actions a,.course-row .row-actions button{font-size:11px;padding:6px 10px;border-radius:6px;text-decoration:none}
+.course-row .open{background:#264f3e;color:#fff}
+.course-row .ghost{background:transparent;border:1px solid #d3ddcc;color:#5a6b57}
+.course-row .danger{background:transparent;border:1px solid #e2c9bf;color:#a1583f}
+.course-row progress{width:100%;height:5px;accent-color:#426b49;margin-top:10px}
+
+@media(max-width:860px){#auth-view{grid-template-columns:1fr;gap:24px}.hero h1{font-size:32px}.admin-grid{grid-template-columns:1fr}}
+
+[hidden]{display:none!important}

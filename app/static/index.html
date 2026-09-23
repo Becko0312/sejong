@@ -1,8 +1,75 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sejong · PDF Studio</title><link rel="stylesheet" href="/static/style.css"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%2322483d'/%3E%3Ctext x='8' y='29' fill='white' font-size='27'%3Eㅅ%3C/text%3E%3C/svg%3E"></head>
-<body><aside><a class="brand" href="/">ㅅ <span>sejong<span class="brand-sub">LEARNING ECOSYSTEM</span></span></a><div class="nav-label">WORKSPACE</div><a class="active" href="/">▤ &nbsp; PDF Studio <span>01</span></a><div class="future">▧ &nbsp; Course Builder <small>OPEN A COMPLETED BOOK</small></div><div class="future">◉ &nbsp; AI Tutor <small>INSIDE EACH COURSE</small></div><div class="aside-bottom"><span class="dot"></span> Private session<p>Only this browser can access your uploads.</p></div></aside>
-<main><header><span>Workspace <b>/</b> PDF Studio</span><span class="badge">OPEN SOURCE · NO AI TOKENS</span></header><section class="heading"><div><p class="eyebrow">FROM TEXTBOOK TO POSSIBILITY</p><h1>A new chapter for your books.</h1><p>Turn your PDFs into a web-ready library, one page at a time.</p></div><span class="seal" aria-hidden="true">한</span></section>
-<div class="flow"><div class="current"><span>01</span><strong>Convert your book</strong><small>PDF → HTML + assets</small></div><i>→</i><div class="current"><span>02</span><strong>Open as a course</strong><small>Navigable book website</small></div><i>→</i><div class="current"><span>03</span><strong>Learn with an AI tutor</strong><small>Voice-capable · per page</small></div></div>
-<div class="workspace"><section class="card upload"><div class="card-head"><h2>Start a conversion</h2><span>PDF → HTML</span></div><form id="upload-form"><label class="drop" id="drop"><span class="file-icon">↥</span><strong>Give your textbook a new home</strong><span>Drop a PDF here, or choose a file</span><span class="choose">Choose PDF</span><input id="file" type="file" accept="application/pdf,.pdf" required><small><span id="limits">Up to 200 MB · 500 pages · Access expires after 24 hours</span></small></label><div class="options"><label><input id="ocr" type="checkbox"> Recognize scanned text with free, local OCR</label><label for="languages">OCR languages</label><select id="languages"><option value="kor+mon+eng">Korean + Mongolian + English</option><option value="eng">English</option><option value="kor">Korean</option><option value="mon">Mongolian</option></select><small>OCR takes longer and needs review. No AI APIs or token charges.</small></div><div id="selected">No file selected</div><button id="submit" type="submit">Convert to HTML <span>↗</span></button><p id="message" role="status" aria-live="polite"></p></form><div class="note"><strong>Made for large textbooks</strong><p>Conversions run in the background. Completed pages are saved so interrupted work can resume.</p></div></section>
-<section class="card output-info"><p class="eyebrow">WHAT’S INSIDE YOUR EXPORT</p><h2>One book.<br>A portable web library.</h2><div class="feature"><span>01</span><div><strong>Faithful page layouts</strong><p>Illustrations, exercises and typography preserved as page images in HTML.</p></div></div><div class="feature"><span>02</span><div><strong>Searchable text</strong><p>Poppler extracts embedded text. Optional Tesseract OCR recognizes scanned pages, with review flags.</p></div></div><div class="feature"><span>03</span><div><strong>Ready for the next app</strong><p>A versioned JSON manifest connects pages and assets for the future builder.</p></div></div><div class="format">index.html &nbsp; / &nbsp; pages &nbsp; / &nbsp; manifest.json</div></section></div>
-<section class="library"><div class="library-head"><div><h2>Your conversions <span id="count">0</span></h2><p>Private to this browser. Access expires after 24 hours; automatic storage cleanup follows.</p></div><button class="secondary" id="refresh">↻ Refresh</button></div><div id="jobs" aria-live="polite"></div></section><footer>SEJONG PDF STUDIO <span>Powered by Poppler & Tesseract.</span></footer></main><script src="/static/app.js"></script></body></html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Book2Course</title>
+<link rel="stylesheet" href="/static/home.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%2322483d'/%3E%3Ctext x='7' y='29' fill='white' font-size='26'%3E한%3C/text%3E%3C/svg%3E"></head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">한 <span>Book2Course</span></a>
+  <div id="userbox" class="userbox"></div>
+</header>
+
+<main id="main">
+  <!-- Signed out -->
+  <section id="auth-view" class="view" hidden>
+    <div class="hero">
+      <p class="eyebrow">BOOK → COURSE</p>
+      <h1>Language books,<br>taught by an AI tutor.</h1>
+      <p class="lede">Upload a language textbook and it becomes an interactive course with a proactive AI tutor. Sign up to study, or log in as an administrator to add courses.</p>
+    </div>
+    <div class="auth-card">
+      <div class="tabs"><button id="tab-login" class="tab active" type="button">Log in</button><button id="tab-register" class="tab" type="button">Sign up</button></div>
+      <form id="auth-form">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button id="auth-submit" type="submit">Log in</button>
+        <p id="auth-msg" class="msg" role="status" aria-live="polite"></p>
+        <p class="hint" id="auth-hint">New here? <a href="#" id="switch-register">Create a student account</a>.</p>
+      </form>
+    </div>
+  </section>
+
+  <!-- Client (student) -->
+  <section id="client-view" class="view" hidden>
+    <div class="view-head"><h1>Available courses</h1><button class="ghost" id="catalog-refresh" type="button">↻ Refresh</button></div>
+    <div id="catalog" class="grid" aria-live="polite"></div>
+  </section>
+
+  <!-- Admin -->
+  <section id="admin-view" class="view" hidden>
+    <div class="admin-grid">
+      <section class="panel add-panel">
+        <h2>Add a course</h2>
+        <form id="add-form">
+          <label for="c-title">Course title</label>
+          <input id="c-title" placeholder="e.g. Korean 1" required>
+          <div class="row">
+            <div><label for="c-source">From language</label><input id="c-source" placeholder="Korean"></div>
+            <div><label for="c-target">To language</label><input id="c-target" placeholder="Mongolian"></div>
+          </div>
+          <label for="c-desc">Description <span class="opt">(optional)</span></label>
+          <input id="c-desc" placeholder="Short summary shown to students">
+          <label class="check"><input id="c-ocr" type="checkbox" checked> Recognize scanned text with OCR</label>
+          <label for="c-langs">OCR languages</label>
+          <select id="c-langs">
+            <option value="kor+mon+eng">Korean + Mongolian + English</option>
+            <option value="eng">English</option>
+            <option value="kor">Korean</option>
+            <option value="mon">Mongolian</option>
+          </select>
+          <label class="drop" id="drop"><input id="c-file" type="file" accept="application/pdf,.pdf" required><span id="c-filename">Choose a PDF textbook</span></label>
+          <button id="add-submit" type="submit">Convert to course ↗</button>
+          <p id="add-msg" class="msg" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+      <section class="panel">
+        <div class="view-head"><h2>Courses <span id="course-count" class="count">0</span></h2><button class="ghost" id="admin-refresh" type="button">↻ Refresh</button></div>
+        <div id="admin-list" aria-live="polite"></div>
+      </section>
+    </div>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+</body></html>

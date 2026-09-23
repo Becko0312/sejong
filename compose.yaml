@@ -34,6 +34,8 @@ services:
     environment:
       <<: *environment
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       TUTOR_PROVIDER: ${TUTOR_PROVIDER:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}

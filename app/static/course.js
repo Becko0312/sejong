@@ -1,13 +1,8 @@
 'use strict';
 // Book2Course reader: renders a converted book as a lesson-structured course + AI tutor.
 const app = document.getElementById('app');
-// Owner view: /course/{id} (private endpoints). Student view: /learn/{token} (public share endpoints).
-const shareMatch = location.pathname.match(/^\/learn\/([A-Za-z0-9_-]+)/);
-const shared = !!shareMatch;
-const jobId = shared ? shareMatch[1] : decodeURIComponent(location.pathname.replace(/^\/course\//, '').replace(/\/$/, ''));
-const API = shared
-  ? { course: `/api/shared/${jobId}`, image: (n) => `/shared/${jobId}/page-${n}.png`, tutor: `/api/shared/${jobId}/tutor` }
-  : { course: `/api/courses/${jobId}`, image: (n) => `/books/${jobId}/page-${n}.png`, tutor: `/api/tutor/${jobId}` };
+const jobId = decodeURIComponent(location.pathname.replace(/^\/course\//, '').replace(/\/$/, ''));
+const API = { course: `/api/courses/${jobId}`, image: (n) => `/books/${jobId}/page-${n}.png`, tutor: `/api/tutor/${jobId}` };
 const state = { csrf: '', tutor: { enabled: false }, course: null, pages: [], lessons: [], title: '', current: 0, history: [], busy: false, taught: new Set() };
 const MODE_LABELS = { intro: 'Start teaching this page', explain: '📖 Explain this page', vocab: '🔤 Teach the vocabulary', quiz: '✍️ Quiz me on this page', practice: '🗣️ Practice speaking' };
 
@@ -31,11 +26,12 @@ const LANG = { korean: 'Korean', japanese: 'Japanese', chinese: 'Chinese', engli
 
 async function boot() {
   try {
-    const session = await fetch('/api/session').then((r) => r.json());
-    state.csrf = session.csrf;
-    if (shared) { const back = document.querySelector('.back'); if (back) back.remove(); }
+    const account = await fetch('/api/me').then((r) => r.json());
+    if (!account.authenticated) { location.href = '/'; return; }
+    state.csrf = account.csrf;
     const course = await fetch(API.course).then((r) => {
-      if (!r.ok) throw new Error(r.status === 404 ? 'This course is not available, or its link has expired.' : 'Could not load this course.');
+      if (r.status === 401) { location.href = '/'; throw new Error('Please sign in.'); }
+      if (!r.ok) throw new Error(r.status === 404 ? 'This course is not available.' : 'Could not load this course.');
       return r.json();
     });
     state.course = course;
