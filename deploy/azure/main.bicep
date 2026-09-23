@@ -8,7 +8,7 @@ param apiImage string
 @description('Public GHCR one-shot job image pinned by digest.')
 param workerImage string
 @description('Monthly tracking budget in subscription billing currency, not a hard spending cap.')
-param monthlyBudget int = 25
+param monthlyBudget int
 @description('First day of the current month in YYYY-MM-DD format.')
 param budgetStart string
 @description('Budget end date; choose at least one year after start.')
@@ -102,8 +102,9 @@ resource workerQueue 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: queue
   properties: { roleDefinitionId: queueRole, principalId: workerIdentity.properties.principalId, principalType: 'ServicePrincipal' }
 }
-resource environment 'Microsoft.App/managedEnvironments@2025-01-01' = {
-  name: '${prefix}-environment'
+resource environment 'Microsoft.App/managedEnvironments@2026-01-01' = {
+  name: '${prefix}-jobs-environment'
+  kind: 'Standard'
   location: location
   properties: {
     workloadProfiles: [{ name: 'Consumption', workloadProfileType: 'Consumption' }]

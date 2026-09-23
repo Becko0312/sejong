@@ -106,3 +106,24 @@ def test_sandbox_denies_network():
     result=subprocess.run([sys.executable,'-c', 'from app.cloud_convert import sandbox; sandbox(); import socket; socket.socket()'],capture_output=True)
     assert result.returncode!=0
     assert b'Operation not permitted' in result.stderr
+
+
+def test_chunk_boundary_and_download_allowance(cloud, monkeypatch):
+    store, a, b, ha, hb = cloud
+    from app.cloud_store import CHUNK_BYTES, StoreError
+    data = sample() + b'\n' * CHUNK_BYTES
+    job = a.post('/api/uploads', json={'name': 'large.pdf', 'size': len(data)}, headers=ha).json()
+    path = f'/api/uploads/{job["id"]}'
+    assert a.put(path+'/chunks/0', content=data[:CHUNK_BYTES], headers=ha).status_code == 204
+    assert a.put(path+'/chunks/0', content=b'%PDF-'+b'x'*(CHUNK_BYTES-5), headers=ha).status_code == 409
+    assert a.post(path+'/complete', headers=ha).status_code == 409
+    assert a.put(path+'/chunks/1', content=data[CHUNK_BYTES:], headers=ha).status_code == 204
+    assert a.post(path+'/complete', headers=ha).status_code == 202
+    assert store.source(job['id']).download_blob().readall() == data
+    monkeypatch.setenv('DOWNLOAD_MB_PER_DAY', '1')
+    with store.transaction() as state:
+        state.pop('transfer', None)
+    store.reserve_download(1024**2)
+    with pytest.raises(StoreError) as error:
+        store.reserve_download(1)
+    assert error.value.code == 429

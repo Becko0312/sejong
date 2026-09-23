@@ -4,7 +4,7 @@ The public API scales to zero; a Storage Queue starts a one-shot Container Apps 
 
 ## Budget and limits
 
-Owner-approved target: **US$25/month**, not a guaranteed bill or spending cap. A resource-group Azure budget notifies Owners at 80% and 100%; its amount is denominated in the subscription's billing currency. Confirm the billing currency before treating 25 as US$25.
+Owner-approved target: **US$25/month**, not a guaranteed bill or spending cap. A resource-group Azure budget notifies Owners at 80% and 100%; its amount is denominated in the subscription's billing currency. This subscription bills in KRW. The deployed alert budget is **₩33,000/month**, conservatively below the US$25 target using September 23 indicative exchange rates (roughly ₩1,350–1,365/USD). It does not automatically track exchange rates. [Rate reference](https://www.exchangerates.org.uk/USD-KRW-exchange-rate-history.html).
 
 Japan East retail compute rates checked 2026-09-23: $0.000024 per active vCPU-second and $0.000003 per GiB-second. Monthly subscription-wide grants are 180,000 vCPU-seconds and 360,000 GiB-seconds. Ten daily processing starts × 30 days × the 2,100-second platform timeout × 1 vCPU/2 GiB would be approximately **$13.50 in worker compute after unused free grants**, or $18.90 without grants. This is an illustrative conversion-compute estimate, not a total-bill cap: API usage, startup/duplicate executions, storage, queue/blob operations, downloads, taxes and other subscription usage are additional. See [Azure pricing](https://azure.microsoft.com/pricing/details/container-apps/) and [retail pricing API](https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices).
 
@@ -22,7 +22,7 @@ Access expires 24 hours after upload. Storage lifecycle cleanup is asynchronous 
 az deployment group validate -g sejong-converter-rg -f deploy/azure/main.bicep \
   -p location=japaneast apiImage=ghcr.io/becko0312/sejong-api@sha256:REPLACE \
      workerImage=ghcr.io/becko0312/sejong-cloud-worker@sha256:REPLACE \
-     budgetStart=2026-09-01 budgetEnd=2027-10-01
+     monthlyBudget=33000 budgetStart=2026-09-01 budgetEnd=2027-10-01
 # Use the same arguments with `what-if`, then `create`.
 ```
 
