@@ -1,0 +1,92 @@
+name: sejong
+x-common: &common
+  restart: unless-stopped
+  user: '10001:10001'
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  volumes:
+    - studio-data:/data
+  tmpfs:
+    - /tmp:size=128m,mode=1777
+  environment: &environment
+    SEJONG_DATA: /data
+    MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-200}
+    MAX_PAGES: ${MAX_PAGES:-500}
+    MAX_OUTPUT_MB: ${MAX_OUTPUT_MB:-1024}
+    RETENTION_HOURS: ${RETENTION_HOURS:-24}
+    MAX_ACTIVE_JOBS: ${MAX_ACTIVE_JOBS:-10}
+    JOBS_PER_SESSION: ${JOBS_PER_SESSION:-3}
+    JOBS_PER_IP_DAY: ${JOBS_PER_IP_DAY:-10}
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: '3'
+services:
+  api:
+    <<: *common
+    build:
+      context: .
+      target: api
+    ports:
+      - '127.0.0.1:${PORT:-8000}:8000'
+    environment:
+      <<: *environment
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
+    command: [uvicorn, app.main:app, --host, 0.0.0.0, --port, '8000', --no-access-log, --proxy-headers, --forwarded-allow-ips, '172.30.55.10']
+    networks:
+      edge:
+        ipv4_address: 172.30.55.11
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 64
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  worker:
+    <<: *common
+    build:
+      context: .
+      target: worker
+    network_mode: none
+    mem_limit: 2g
+    cpus: 1.5
+    pids_limit: 64
+    healthcheck:
+      test: [CMD, python, -c, "import time,pathlib; assert time.time()-pathlib.Path('/data/worker-heartbeat').stat().st_mtime<30"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  proxy:
+    image: caddy:2-alpine
+    profiles: [public]
+    restart: unless-stopped
+    ports: ['80:80', '443:443']
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      edge:
+        ipv4_address: 172.30.55.10
+    mem_limit: 256m
+    pids_limit: 64
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+volumes:
+  studio-data:
+  caddy-data:
+  caddy-config:
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.30.55.0/24

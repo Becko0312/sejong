@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "dnsLabel": { "value": "REPLACE-WITH-UNIQUE-LOWERCASE-LABEL" },
+    "sourceRevision": { "value": "REPLACE-WITH-REVIEWED-40-CHARACTER-GIT-SHA" },
+    "sshPublicKey": { "value": "REPLACE-WITH-YOUR-SSH-PUBLIC-KEY" },
+    "vmSize": { "value": "Standard_B2als_v2" }
+  }
+}

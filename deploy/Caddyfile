@@ -1,0 +1,18 @@
+{
+    servers {
+        timeouts {
+            read_header 10s
+            read_body 600s
+            idle 60s
+        }
+    }
+}
+{$SITE_ADDRESS} {
+    request_body {
+        max_size 200MB
+    }
+    reverse_proxy api:8000 {
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}

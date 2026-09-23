@@ -1,0 +1,133 @@
+{
+  "retrieved_at": "2026-09-23T12:57:01.478411+00:00",
+  "region": "koreacentral",
+  "currency": "USD",
+  "meters": {
+    "vm": [
+      {
+        "productName": "Virtual Machines Basv2 Series Windows",
+        "skuName": "B2als v2",
+        "meterName": "B2als v2",
+        "retailPrice": 0.056,
+        "unitOfMeasure": "1 Hour",
+        "effectiveStartDate": "2023-09-01T00:00:00Z"
+      },
+      {
+        "productName": "Virtual Machines Basv2 Series",
+        "skuName": "B2als v2 Low Priority",
+        "meterName": "B2als v2 Low Priority",
+        "retailPrice": 0.00936,
+        "unitOfMeasure": "1 Hour",
+        "effectiveStartDate": "2023-09-01T00:00:00Z"
+      },
+      {
+        "productName": "Virtual Machines Basv2 Series",
+        "skuName": "B2als v2 Spot",
+        "meterName": "B2als v2 Spot",
+        "retailPrice": 0.04212,
+        "unitOfMeasure": "1 Hour",
+        "effectiveStartDate": "2025-09-01T00:00:00Z"
+      },
+      {
+        "productName": "Basv2 Series Cloud Services",
+        "skuName": "B2als v2",
+        "meterName": "B2als v2",
+        "retailPrice": 0.056,
+        "unitOfMeasure": "1 Hour",
+        "effectiveStartDate": "2023-09-01T00:00:00Z"
+      },
+      {
+        "productName": "Virtual Machines Basv2 Series",
+        "skuName": "B2als v2",
+        "meterName": "B2als v2",
+        "retailPrice": 0.0468,
+        "unitOfMeasure": "1 Hour",
+        "effectiveStartDate": "2023-09-01T00:00:00Z"
+      },
+      {
+        "productName": "Basv2 Series Cloud Services",
+        "skuName": "B2als v2 Low Priority",
+        "meterName": "B2als v2 Low Priority",
+        "retailPrice": 0.0224,
+        "unitOfMeasure": "1 Hour",
+        "effectiveStartDate": "2023-09-01T00:00:00Z"
+      },
+      {
+        "productName": "Virtual Machines Basv2 Series Windows",
+        "skuName": "B2als v2 Spot",
+        "meterName": "B2als v2 Spot",
+        "retailPrice": 0.0504,
+        "unitOfMeasure": "1 Hour",
+        "effectiveStartDate": "2025-09-01T00:00:00Z"
+      },
+      {
+        "productName": "Virtual Machines Basv2 Series Windows",
+        "skuName": "B2als v2 Low Priority",
+        "meterName": "B2als v2 Low Priority",
+        "retailPrice": 0.0224,
+        "unitOfMeasure": "1 Hour",
+        "effectiveStartDate": "2023-09-01T00:00:00Z"
+      }
+    ],
+    "disk": [
+      {
+        "productName": "Standard SSD Managed Disks",
+        "skuName": "E6 LRS",
+        "meterName": "E6 LRS Disk Mount",
+        "retailPrice": 0.634,
+        "unitOfMeasure": "1/Month",
+        "effectiveStartDate": "2021-07-01T00:00:00Z"
+      },
+      {
+        "productName": "Standard SSD Managed Disks",
+        "skuName": "E6 LRS",
+        "meterName": "E6 LRS Disk Operations",
+        "retailPrice": 0.002,
+        "unitOfMeasure": "10K",
+        "effectiveStartDate": "2018-11-01T00:00:00Z"
+      },
+      {
+        "productName": "Standard SSD Managed Disks",
+        "skuName": "E6 LRS",
+        "meterName": "E6 LRS Disk",
+        "retailPrice": 4.8,
+        "unitOfMeasure": "1/Month",
+        "effectiveStartDate": "2019-01-01T00:00:00Z"
+      }
+    ],
+    "ip": [
+      {
+        "productName": "IP Addresses",
+        "skuName": "Standard",
+        "meterName": "Standard IPv4 Static Public IP",
+        "retailPrice": 0.005,
+        "unitOfMeasure": "1 Hour",
+        "effectiveStartDate": "2018-06-01T00:00:00Z"
+      },
+      {
+        "productName": "IP Addresses",
+        "skuName": "Global",
+        "meterName": "Global IPv4 Static Public IP",
+        "retailPrice": 0.01,
+        "unitOfMeasure": "1 Hour",
+        "effectiveStartDate": "2022-03-01T00:00:00Z"
+      },
+      {
+        "productName": "IP Addresses",
+        "skuName": "Basic",
+        "meterName": "Basic IPv4 Static Public IP",
+        "retailPrice": 0.0036,
+        "unitOfMeasure": "1 Hour",
+        "effectiveStartDate": "2014-08-01T00:00:00Z"
+      },
+      {
+        "productName": "IP Addresses",
+        "skuName": "Basic",
+        "meterName": "Basic IPv4 Dynamic Public IP",
+        "retailPrice": 0.004,
+        "unitOfMeasure": "1 Hour",
+        "effectiveStartDate": "2014-12-01T00:00:00Z"
+      }
+    ]
+  }
+}
