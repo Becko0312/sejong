@@ -1,12 +1,17 @@
 # Book2Course
 
-Turn a textbook PDF into a live, AI-tutored course website — in one workflow:
+A **"language book → language course" platform**. An administrator uploads a language textbook (Korean, Japanese, …) and it becomes an interactive course; students sign up and learn with a proactive AI tutor. It runs as a single web app (deployable as a container on Azure, Fly, Render, etc.).
 
-1. **Convert** — PDF → image-backed HTML pages with a searchable text layer (offline Poppler + optional Tesseract OCR). **No AI API or token billing in this stage.**
-2. **Open as a course** — any completed conversion becomes a navigable reader (table of contents, page viewer, searchable text) at `/course/{id}`.
-3. **Learn with an AI tutor** — each course page carries a voice-capable AI tutor that teaches from *that page's* content.
+**Accounts and roles.** The homepage has one login form.
+- **Admin** (seeded from `ADMIN_USERNAME` / `ADMIN_PASSWORD`): sees an **Add course** form — upload a PDF, set the title and from→to languages, and the pipeline converts and builds a course — plus a manage list (publish/hide, retry, delete, open).
+- **Client / student** (self sign-up): sees a **catalog** of available courses and studies any of them with the tutor.
 
-Stages 1–2 stay completely free and offline. Stage 3 is the only part that calls a paid model API, is fully optional, and is off unless an API key is configured (see [AI tutor](#ai-tutor-stage-3)). Azure Container Apps deployment uses a scale-to-zero API and queue-triggered conversion jobs.
+**The build pipeline (per course).**
+1. **Convert** — PDF → image-backed HTML pages with a searchable text layer (offline Poppler + optional Tesseract OCR). No AI or token billing in this stage.
+2. **Build** — pages are grouped into lessons (language-book markers like 과 / 課 / Lesson) into a real course website: landing page, lesson-grouped navigation, page viewer.
+3. **Teach** — a proactive AI tutor auto-starts on each lesson and offers Explain / Vocabulary / Quiz / Practice, grounded in the current page. This is the only part that calls a paid model API; without a key the courses still read, the tutor just shows offline. Per-student daily tutor limits (`CLIENT_TUTOR_PER_DAY`) bound the cost of open sign-up.
+
+Access is role-based: study endpoints require sign-in, and clients only reach published courses.
 
 ## Start locally with Docker
 
@@ -41,11 +46,13 @@ The tutor is a **proactive teacher**, not just a Q&A bot. Opening a lesson auto-
 
 It is **language-general**: it teaches the book's target language (Korean, Japanese, …) and explains in the student's own language — mirroring what they write, else the translation language printed on the page, else simple English — always with native-script examples plus romanization. `POST /api/tutor/{id}` takes `{question, page, history, mode}`, where `mode` is one of `intro`/`explain`/`vocab`/`quiz`/`practice` (a typed `question` needs no mode).
 
-## Share a course with students
+## Accounts, roles and access
 
-By default every course is private to the uploader's browser session. The owner can **publish** a completed course (`POST /api/jobs/{id}/share`) to get an unguessable link, `…/learn/{token}`; **students open it with no login** and learn with the tutor, and the owner can **unpublish** (`DELETE /api/jobs/{id}/share`) to revoke it. The workspace shows a "Share to students" control with the link, copy and unpublish.
+Auth is username/password with PBKDF2-hashed passwords and server-side sessions (`app/auth.py`). `GET /api/me` reports the current user; `POST /api/register` self-registers a client and logs in; `POST /api/login` / `POST /api/logout` manage the session. The admin account is seeded from `ADMIN_USERNAME` / `ADMIN_PASSWORD` on startup — set a strong password before deploying.
 
-Public token endpoints — `/learn/{token}` (reader), `/api/shared/{token}` (structure), `/shared/{token}/page-N.png` (page images only), `POST /api/shared/{token}/tutor` — resolve the token to its job with no ownership check, so visitors reach only what was published; private owner endpoints stay locked to the owner session. The reader auto-switches to these endpoints on `/learn/{token}` and hides the workspace link. Cost/abuse controls: the public tutor still requires the visitor's own CSRF token and is rate limited per visitor IP and per share per day (`SHARE_TUTOR_PER_IP_DAY` default 40, `SHARE_TUTOR_PER_DAY` default 500). Publishing extends the job's retention to `SHARE_RETENTION_DAYS` (default 365) so the link outlives the 24-hour private-job window. Sharing is implemented in the local app; the Azure cloud API does not have it yet.
+Courses are a global catalog owned by the admin. Admin-only: `POST /api/jobs` (upload + convert, with `title`/`source_lang`/`target_lang`/`description`), `PATCH /api/jobs/{id}` (publish/hide + edit), `POST /api/jobs/{id}/retry`, `DELETE /api/jobs/{id}`, `GET /api/admin/courses` (all courses). Any signed-in user: `GET /api/catalog` (published courses) and, for a published course (or any course if admin), `GET /api/courses/{id}`, `/books/{id}/…`, and `POST /api/tutor/{id}`. Mutations require the session CSRF token; the tutor is rate limited per student per day (`CLIENT_TUTOR_PER_DAY`, default 60); admins are exempt.
+
+The earlier per-session share links were removed in favour of this catalog. The scale-to-zero Azure Jobs variant (`app/cloud_api.py`) predates the platform and is not wired to auth/catalog; the deployable app is this container (`app.main`).
 
 - **Optional and opt-in.** With no provider key configured, `/api/session` reports `tutor.enabled: false`, the panel shows "offline", and the course still fully works. The converter never requires a key.
 - **Provider (`TUTOR_PROVIDER`).** `gemini` (default when `GEMINI_API_KEY` is set) calls Google's Generative Language REST API — model `GEMINI_MODEL` (default `gemini-2.5-flash`, with model thinking disabled for speed/cost). `anthropic` (needs `ANTHROPIC_API_KEY`) uses the Claude Messages API — model `TUTOR_MODEL` (default `claude-opus-5`) and `TUTOR_EFFORT` (default `low`). Both honour `TUTOR_MAX_TOKENS`. This stage is billed per use by the provider; the free converter budget does not cover it.
