@@ -5,19 +5,28 @@ RUN groupadd --gid 10001 studio && useradd --uid 10001 --gid studio --create-hom
     && mkdir /data && chown studio:studio /data
 COPY requirements.lock .
 RUN pip install --no-cache-dir -r requirements.lock
+RUN mkdir -p /usr/share/sejong && dpkg-query -W -f='${binary:Package}\t${source:Package}\t${source:Version}\n' > /usr/share/sejong/debian-packages.tsv
+RUN python -c "import pathlib, urllib.parse; p=pathlib.Path('/usr/share/sejong'); rows=[l.split('\\t') for l in (p/'debian-packages.tsv').read_text().splitlines()]; (p/'debian-sources.tsv').write_text(''.join(pkg+'\\t'+'https://snapshot.debian.org/package/'+urllib.parse.quote(src,safe='')+'/'+urllib.parse.quote(ver,safe='')+'/\\n' for pkg,src,ver in rows))"
 USER studio
 
 FROM base AS api
 COPY app ./app
+COPY THIRD_PARTY.md /usr/share/sejong/THIRD_PARTY.md
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--no-proxy-headers"]
+CMD ["uvicorn", "app.entrypoint:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--no-proxy-headers"]
 
 FROM base AS worker
 USER root
 RUN apt-get update && apt-get install --no-install-recommends -y \
-    poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-kor tesseract-ocr-mon \
+    libseccomp2 poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-kor tesseract-ocr-mon \
     && rm -rf /var/lib/apt/lists/*
+RUN dpkg-query -W -f='${binary:Package}\t${source:Package}\t${source:Version}\n' > /usr/share/sejong/debian-packages.tsv
 COPY app ./app
+COPY THIRD_PARTY.md /usr/share/sejong/THIRD_PARTY.md
+RUN python -c "import pathlib, urllib.parse; p=pathlib.Path('/usr/share/sejong'); rows=[l.split('\\t') for l in (p/'debian-packages.tsv').read_text().splitlines()]; (p/'debian-sources.tsv').write_text(''.join(pkg+'\\t'+'https://snapshot.debian.org/package/'+urllib.parse.quote(src,safe='')+'/'+urllib.parse.quote(ver,safe='')+'/\\n' for pkg,src,ver in rows))"
 USER studio
 ENV OMP_THREAD_LIMIT=1
 CMD ["python", "-m", "app.worker"]
+
+FROM worker AS cloud-worker
+CMD ["python", "-m", "app.cloud_job"]

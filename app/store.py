@@ -1,4 +1,5 @@
 import os
+import fcntl
 from pathlib import Path
 import sqlite3
 
@@ -18,17 +19,19 @@ def connect():
 
 def initialize():
     DATA.mkdir(parents=True, exist_ok=True)
-    with connect() as db:
-        db.execute('PRAGMA journal_mode=WAL')
-        db.execute('BEGIN IMMEDIATE')
-        db.execute('CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, name TEXT, status TEXT, done INTEGER DEFAULT 0, total INTEGER DEFAULT 0, error TEXT, created REAL)')
-        columns = {r['name'] for r in db.execute('PRAGMA table_info(jobs)')}
-        for name, declaration in {'owner': "TEXT DEFAULT 'legacy'", 'expires': 'REAL DEFAULT 0', 'ocr': 'INTEGER DEFAULT 0',
-                                  'languages': "TEXT DEFAULT 'eng'", 'attempts': 'INTEGER DEFAULT 0'}.items():
-            if name not in columns:
-                db.execute(f'ALTER TABLE jobs ADD COLUMN {name} {declaration}')
-        db.execute('CREATE TABLE IF NOT EXISTS requests (ip TEXT, created REAL)')
-        db.execute('CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner)')
+    with (DATA / 'initialize.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        with connect() as db:
+            db.execute('PRAGMA journal_mode=WAL')
+            db.execute('BEGIN IMMEDIATE')
+            db.execute('CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, name TEXT, status TEXT, done INTEGER DEFAULT 0, total INTEGER DEFAULT 0, error TEXT, created REAL)')
+            columns = {r['name'] for r in db.execute('PRAGMA table_info(jobs)')}
+            for name, declaration in {'owner': "TEXT DEFAULT 'legacy'", 'expires': 'REAL DEFAULT 0', 'ocr': 'INTEGER DEFAULT 0',
+                                      'languages': "TEXT DEFAULT 'eng'", 'attempts': 'INTEGER DEFAULT 0'}.items():
+                if name not in columns:
+                    db.execute(f'ALTER TABLE jobs ADD COLUMN {name} {declaration}')
+            db.execute('CREATE TABLE IF NOT EXISTS requests (ip TEXT, created REAL)')
+            db.execute('CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner)')
 
 
 def update(job_id, **values):

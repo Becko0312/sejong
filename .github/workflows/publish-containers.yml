@@ -1,0 +1,26 @@
+name: Publish reviewed converter images
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [api, cloud-worker]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate to GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Build and publish this exact revision
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/$owner/sejong-$TARGET:$GITHUB_SHA"
+          docker build --target "$TARGET" --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" --label "org.opencontainers.image.revision=$GITHUB_SHA" -t "$image" .
+          docker push "$image"

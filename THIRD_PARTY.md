@@ -5,6 +5,6 @@
 - **FastAPI**, **Uvicorn** and their Python dependencies: see installed distribution metadata and their upstream license files. Runtime versions are in `requirements.lock`.
 - **Caddy**: Apache-2.0; https://github.com/caddyserver/caddy .
 
-The images are built using official Python/Debian and Caddy images and Debian packages. Retain upstream license notices. If distributing binary container images, provide the corresponding source and license materials required by their exact packaged versions; this repository does not publish a binary image or claim that a tool's open-source license removes redistribution obligations.
+The images are built using official Python/Debian and Caddy images and Debian packages. Retain upstream license notices. If distributing binary container images, provide the corresponding source and license materials required by their exact packaged versions; published images include package versions and links to exact Debian source versions in `/usr/share/sejong/debian-sources.tsv`, along with packaged license notices under `/usr/share/doc`. Python source distributions are available from PyPI for the versions in `requirements.lock`; the application source is this repository.
 
 Considered but not included: **pdf2htmlEX**, GPL-3.0-or-later, https://github.com/pdf2htmlEX/pdf2htmlEX . It offers native positioned HTML but is not necessary for this first pipeline. Poppler provides the rendering/text primitives and Tesseract addresses the user's scanned textbook. **PyMuPDF is no longer a runtime dependency**.

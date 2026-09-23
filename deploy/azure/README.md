@@ -1,56 +1,44 @@
-# Azure launch package — prepared, NOT deployed
+# Azure Container Apps deployment
 
-One Linux VM runs the public HTTPS proxy, API and a network-disabled converter worker. This avoids a paid AI service, managed database, load balancer and registry at the initial scale. Any visitor can start a private anonymous session; there is no paid signup. The same Docker images can run on other Linux container hosts, but this deployment template targets Azure.
+The public API scales to zero; a Storage Queue starts a one-shot Container Apps Job for conversion. Private Blob Storage holds uploads, page checkpoints and exports. Managed identities authenticate storage access. No AI service, paid converter, VM, registry subscription or Log Analytics workspace is required.
 
-## Budget approval comes before launch
+## Budget and limits
 
-Suggested initial region: Korea Central, subject to subscription quota and SKU availability. Initial resources:
+Owner-approved target: **US$25/month**, not a guaranteed bill or spending cap. A resource-group Azure budget notifies Owners at 80% and 100%; its amount is denominated in the subscription's billing currency. Confirm the billing currency before treating 25 as US$25.
 
-- `Standard_B2als_v2`: 2 vCPU, 4 GiB RAM. Burstable; sustained OCR exhausts CPU credits and slows jobs. Use a steady CPU size for sustained traffic after measuring demand.
-- One 64 GiB Standard SSD LRS OS disk, also holding the Docker volumes.
-- One Standard static public IPv4 address.
-- Outbound bandwidth and disk transactions depend on actual use.
-- Azure-provided DNS name and Caddy automated HTTPS; no custom domain purchase is needed.
+Japan East retail compute rates checked 2026-09-23: $0.000024 per active vCPU-second and $0.000003 per GiB-second. Monthly subscription-wide grants are 180,000 vCPU-seconds and 360,000 GiB-seconds. Ten daily processing starts × 30 days × the 2,100-second platform timeout × 1 vCPU/2 GiB would be approximately **$13.50 in worker compute after unused free grants**, or $18.90 without grants. This is an illustrative conversion-compute estimate, not a total-bill cap: API usage, startup/duplicate executions, storage, queue/blob operations, downloads, taxes and other subscription usage are additional. See [Azure pricing](https://azure.microsoft.com/pricing/details/container-apps/) and [retail pricing API](https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices).
 
-This is not a free Azure deployment. The converter has zero AI API/token charges, but VM, disk, IP and network charges apply. Budget alerts are notifications, not a hard spending cap. Ask the owner to approve a monthly budget and verify current retail/account pricing before creating anything. No deployment command has been executed by the implementation task.
+Defaults: ten accepted conversions/retries and ten processing starts per rolling day globally, one processing slot, 200 MiB input, 500 pages, 1 GiB output, 30-minute conversion timeout (35-minute platform timeout), three attempts per job, three retained jobs per browser, ten uploads per IP per day. Downloads have a shared 1 GiB/day and 10,000-request/day allowance. These conservative public-beta quotas can refuse new work; they do not replace Azure cost monitoring. Abuse can still generate API and storage operation charges.
 
-`python3 deploy/azure/estimate.py` reads Microsoft's public retail price API without Azure credentials or creating resources. It lists matching meters for review rather than silently picking Windows, Spot or low-priority rates. See `cost-estimate.json` for the captured estimate, if present.
+Access expires 24 hours after upload. Storage lifecycle cleanup is asynchronous after objects are older than one day; physical deletion is not guaranteed at exactly 24 hours. Delete revokes access immediately and queues cleanup. Closing the browser does not cancel queued conversion. A failed queue dispatch is repaired on the next job-list request.
 
-## Validate without launching
+## Publish and deploy
 
-```sh
-az bicep build --file deploy/azure/main.bicep --outfile /tmp/sejong-main.json
-```
-
-After choosing the subscription, region and reviewed source revision, copy `parameters.example.json` to an ignored local parameters file. Use a valid lowercase DNS label, full commit SHA and an existing administrator SSH public key. The public repository is cloned at that exact commit; no GitHub credential is stored on the VM. Never put secrets into custom data.
-
-Before launch, inspect availability and policy with your Azure subscription, then run deployment validation and `what-if`. Those require an existing resource group. **Creating the group and deployment below is a post-approval operator step**, not part of preparing this package:
+1. Run the repository's **Publish reviewed converter images** GitHub Actions workflow. It publishes `sejong-api` and `sejong-cloud-worker` to GHCR. Make those public-source packages public, then obtain their immutable digests. No user documents belong in images.
+2. Sign in with Azure CLI and select the subscription. Register `Microsoft.App`, `Microsoft.Storage`, `Microsoft.ManagedIdentity` and `Microsoft.Consumption`.
+3. Create `sejong-converter-rg` in a supported Consumption region. Validate the template and inspect its what-if before deploying:
 
 ```sh
-az group create --name sejong-converter-rg --location koreacentral
-az deployment group validate --resource-group sejong-converter-rg --template-file deploy/azure/main.bicep --parameters @deploy/azure/parameters.local.json
-az deployment group what-if --resource-group sejong-converter-rg --template-file deploy/azure/main.bicep --parameters @deploy/azure/parameters.local.json
-az deployment group create --resource-group sejong-converter-rg --template-file deploy/azure/main.bicep --parameters @deploy/azure/parameters.local.json
+az deployment group validate -g sejong-converter-rg -f deploy/azure/main.bicep \
+  -p location=japaneast apiImage=ghcr.io/becko0312/sejong-api@sha256:REPLACE \
+     workerImage=ghcr.io/becko0312/sejong-cloud-worker@sha256:REPLACE \
+     budgetStart=2026-09-01 budgetEnd=2027-10-01
+# Use the same arguments with `what-if`, then `create`.
 ```
 
-Only inbound TCP 80 and 443 are exposed. There is no inbound SSH rule. Administration uses Azure Run Command with the operator's Azure identity; the VM has no managed identity or application cloud credentials.
+The template outputs the public HTTPS URL. Check `/healthz`, upload a synthetic PDF, wait for its queue-triggered job, download and inspect the ZIP, and verify another browser session cannot access it. Do not publish the supplied textbook as a shared sample.
 
-## Launch acceptance
+The API uses 0.25 vCPU/0.5 GiB and zero-to-one replicas; the job uses 1 vCPU/2 GiB. A blob lease serializes actual conversion even when the scaler starts duplicate executions. Queue visibility renewals and fenced job leases support interruption recovery. Checkpoints allow page reuse on retry. The converter subprocess has resource limits, no identity variables, and a seccomp rule denying new network sockets. The supervisor must retain network access to private Azure storage. This is a low-traffic beta, not a hardened multi-tenant isolation guarantee.
 
-Azure VM provisioning success does not prove cloud-init or the app finished. Inspect `/var/log/cloud-init-output.log` using Run Command, then verify:
+## Local cloud-path verification
 
-1. `docker compose ps` reports healthy API and worker.
-2. The HTTPS URL opens without certificate warnings; `/healthz` returns `ok`.
-3. Upload a small text PDF and a scanned PDF with OCR. Download and inspect both ZIPs.
-4. A second private browser session cannot list or fetch the first session's jobs, pages or ZIPs.
-5. Confirm the worker has `NetworkMode=none`, memory/CPU limits, dropped capabilities and a read-only root filesystem.
-6. Confirm external port 8000 and SSH are unreachable. The proxy must overwrite client-provided forwarded addresses; do not add another proxy without updating trust settings.
-7. Verify deletion and expiry. Run a real load test and set Azure budget alerts before broadly announcing the service.
+```sh
+docker compose -f compose.azure-local.yaml up --build -d api
+# Open http://127.0.0.1:8002, upload a PDF, then run one queued job:
+docker compose -f compose.azure-local.yaml --profile job run --rm job
+RUN_AZURE_EMULATOR_TESTS=1 .venv/bin/python -m pytest -q
+```
 
-## Operational limits
+Azurite is bound to localhost with a deliberately non-secret development key. Production disables shared-key storage authentication. Browser sessions are anonymous and private; clearing cookies loses access. No account recovery or billing integration is implemented.
 
-This is a bounded, single-node public beta design, not a highly available platform. SQLite and files share a Docker volume on the VM disk. One worker serializes jobs and recovers page checkpoints after restart. Job subprocesses share the worker volume, so this is not per-customer VM isolation. Do not store sensitive regulated documents. Keep parser packages and container base images patched; for stronger adversarial isolation move each job into a disposable container/VM with only its own input and output mounts.
-
-Anonymous cookie possession grants access; clearing cookies loses access. No cross-device account or password recovery exists. Limits are per session and per IP; distributed abuse is still possible. Downloads are not bandwidth-metered. Files expire after 24 hours and the worker removes them; if the worker is down, expiry still blocks reads but physical deletion waits until it returns. Monitor worker health, free disk, oldest queued job and CPU credits. Do not automatically restart an unhealthy worker in a tight loop.
-
-Rebuild patched images regularly with `docker compose build --pull`, then `docker compose --profile public up -d`. Use a reviewed commit for upgrades. Do not use `docker compose down -v` unless deleting all uploaded documents is intended. Old VM disks/IPs can keep billing after deallocation; review all resources during shutdown. No backups are configured for intentionally temporary uploads.
+The older VM deployment remains under `legacy-vm/` for reference and is not the selected deployment.

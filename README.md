@@ -1,6 +1,6 @@
 # Sejong PDF Studio
 
-A self-hosted, open-source-tool-powered PDF-to-HTML converter, with optional OCR. **No AI API, model API key, paid conversion service or token billing.** Azure deployment is prepared but has not been launched.
+A self-hosted, open-source-tool-powered PDF-to-HTML converter, with optional OCR. **No AI API, model API key, paid conversion service or token billing.** Azure Container Apps deployment uses a scale-to-zero API and queue-triggered conversion jobs.
 
 ## Start locally with Docker
 
@@ -23,7 +23,7 @@ OCR is off by default because it uses more CPU. Enable it for scanned PDFs such 
 
 The future builder can import the ZIP and read `manifest.json`. It contains `engine`, `ocr_languages`, `page_count`, `ocr_required_pages`, `review_required_pages` and `pages`. Each page has relative `html` and `image` paths, `text`, `text_source` (`embedded`, `ocr`, `none`), word coordinates normalized to page size, review flags and dimensions. Scanned text is never treated as an instruction. No builder or tutor is implemented in this stage.
 
-## Public-beta protections
+## Local public-beta protections
 
 Anyone can start a session without signup, but jobs are private to a random HTTP-only session cookie. Every list, status, page, manifest, ZIP, retry and delete endpoint checks ownership. Mutations require a CSRF token; public cookies require HTTPS. Clearing cookies loses access; there are no accounts or cross-device recovery yet. Job URLs are not public sharing links.
 
@@ -33,9 +33,9 @@ The converter container has no network, runs as an unprivileged user, drops capa
 
 ## Azure
 
-[Deployment package](deploy/azure/README.md): Bicep, cloud-init, HTTPS proxy and a read-only price lookup. No cloud resource has been created. The owner selected **prepare deployment and confirm budget before launch**.
+[Deployment instructions and cost controls](deploy/azure/README.md). The selected deployment is Azure Container Apps Jobs with a **US$25/month target**. Supporting storage, requests and bandwidth are billable; budget alerts are not a hard cap. Cloud defaults restrict conversion starts to ten per rolling day and downloads to 1 GiB/day. No always-on VM is required.
 
-Software/tool usage is free of token fees. Azure VM, disk, IP, bandwidth and operations cost money. In Korea Central, the captured September 23, 2026 retail prices imply roughly **US$42.61/month base** at 730 VM/IP hours: Linux B2als v2 $34.164 + E6 64 GiB SSD $4.80 + Standard public IPv4 $3.65. Excludes disk operations, egress, taxes, optional services and account-specific discounts. See `deploy/azure/cost-estimate.json` and refresh the estimate before launch. Budgets are alerts, not hard cost caps.
+Cloud uploads use `POST /api/uploads` with JSON name/size/ocr/languages, sequential `PUT /api/uploads/{id}/chunks/{index}` requests (4 MiB each), and `POST /api/uploads/{id}/complete`. All mutations use the session CSRF token. The frontend selects this protocol from `/api/session`. Export and ownership APIs match the local version. Cloud data uses private Azure Blob Storage and Storage Queue; it does not use local SQLite. Cloud conversion timeout is 30 minutes, with a 35-minute platform limit. Cloud expiry revokes access at 24 hours; asynchronous storage lifecycle cleanup follows.
 
 ## API
 
@@ -68,4 +68,4 @@ The original 280-page visual export in the repository's ignored `data/` is prese
 
 ## Source licenses
 
-See [THIRD_PARTY.md](THIRD_PARTY.md). Poppler and Tesseract are existing open-source tools; this service invokes their command-line interfaces. PyMuPDF and its AGPL/commercial dependency have been removed from the runtime. No container image is published by this task.
+See [THIRD_PARTY.md](THIRD_PARTY.md). Poppler and Tesseract are existing open-source tools; this service invokes their command-line interfaces. PyMuPDF and its AGPL/commercial dependency have been removed from the runtime. Public deployment images contain code and open-source tools only, never uploaded documents.

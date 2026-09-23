@@ -1,134 +1,209 @@
-@description('Azure region. Check VM availability and pricing before deployment.')
+@description('Consumption region; verify availability for the subscription.')
 param location string = resourceGroup().location
-
-@description('Globally unique lowercase DNS label for the public converter.')
 @minLength(3)
-@maxLength(40)
-param dnsLabel string
+@maxLength(10)
+param prefix string = 'sejong'
+@description('Public GHCR API image pinned by digest.')
+param apiImage string
+@description('Public GHCR one-shot job image pinned by digest.')
+param workerImage string
+@description('Monthly tracking budget in subscription billing currency, not a hard spending cap.')
+param monthlyBudget int = 25
+@description('First day of the current month in YYYY-MM-DD format.')
+param budgetStart string
+@description('Budget end date; choose at least one year after start.')
+param budgetEnd string
+@minValue(1)
+@maxValue(100)
+param dailyConversionLimit int = 10
 
-@description('Full 40-character reviewed commit SHA from Becko0312/sejong.')
-@minLength(40)
-@maxLength(40)
-param sourceRevision string
+var suffix = uniqueString(resourceGroup().id)
+var apiName = '${prefix}-api'
+var blobRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+var queueRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')
 
-@description('Administrator SSH public key. SSH is not exposed by the network rules.')
-param sshPublicKey string
-
-@description('Initial low-traffic burstable instance; sustained OCR may require a non-burstable size.')
-param vmSize string = 'Standard_B2als_v2'
-
-@description('Linux administrator account; no password or public SSH access.')
-param adminUsername string = 'sejongadmin'
-
-var name = 'sejong-converter'
-var hostname = '${dnsLabel}.${location}.cloudapp.azure.com'
-var bootstrap = replace(replace(loadTextContent('cloud-init.yaml'), '__HOSTNAME__', hostname), '__REVISION__', sourceRevision)
-
-resource nsg 'Microsoft.Network/networkSecurityGroups@2024-05-01' = {
-  name: '${name}-nsg'
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: '${prefix}${suffix}'
   location: location
+  kind: 'StorageV2'
+  sku: { name: 'Standard_LRS' }
   properties: {
-    securityRules: [
-      {
-        name: 'PublicWeb'
-        properties: {
-          priority: 100
-          access: 'Allow'
-          direction: 'Inbound'
-          protocol: 'Tcp'
-          sourcePortRange: '*'
-          destinationPortRanges: ['80', '443']
-          sourceAddressPrefix: 'Internet'
-          destinationAddressPrefix: '*'
-        }
-      }
-    ]
+    accessTier: 'Hot'
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+    allowBlobPublicAccess: false
+    allowSharedKeyAccess: false
   }
 }
-resource network 'Microsoft.Network/virtualNetworks@2024-05-01' = {
-  name: '${name}-network'
-  location: location
+resource blobs 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
   properties: {
-    addressSpace: { addressPrefixes: ['10.42.0.0/16'] }
-    subnets: [
-      {
-        name: 'web'
-        properties: {
-          addressPrefix: '10.42.1.0/24'
-          networkSecurityGroup: { id: nsg.id }
-        }
-      }
-    ]
+    isVersioningEnabled: false
+    deleteRetentionPolicy: { enabled: false }
+    containerDeleteRetentionPolicy: { enabled: false }
   }
 }
-resource ip 'Microsoft.Network/publicIPAddresses@2024-05-01' = {
-  name: '${name}-ip'
-  location: location
-  sku: { name: 'Standard' }
-  properties: {
-    publicIPAllocationMethod: 'Static'
-    dnsSettings: { domainNameLabel: dnsLabel }
-  }
-}
-resource nic 'Microsoft.Network/networkInterfaces@2024-05-01' = {
-  name: '${name}-nic'
-  location: location
-  properties: {
-    ipConfigurations: [
-      {
-        name: 'web'
-        properties: {
-          privateIPAllocationMethod: 'Dynamic'
-          subnet: { id: '${network.id}/subnets/web' }
-          publicIPAddress: { id: ip.id }
-        }
-      }
-    ]
-  }
-}
-resource vm 'Microsoft.Compute/virtualMachines@2024-07-01' = {
+resource containers 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = [for name in ['control', 'uploads', 'exports']: {
+  parent: blobs
   name: name
+  properties: { publicAccess: 'None' }
+}]
+resource queues 'Microsoft.Storage/storageAccounts/queueServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+}
+resource queue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
+  parent: queues
+  name: 'conversions'
+}
+resource lifecycle 'Microsoft.Storage/storageAccounts/managementPolicies@2023-05-01' = {
+  parent: storage
+  name: 'default'
+  properties: {
+    policy: {
+      rules: [{
+        name: 'temporary-documents'
+        enabled: true
+        type: 'Lifecycle'
+        definition: {
+          filters: { blobTypes: ['blockBlob'], prefixMatch: ['uploads/', 'exports/'] }
+          actions: { baseBlob: { delete: { daysAfterModificationGreaterThan: 1 } } }
+        }
+      }]
+    }
+  }
+}
+resource apiIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${prefix}-api-identity'
+  location: location
+}
+resource workerIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${prefix}-job-identity'
+  location: location
+}
+resource apiBlobs 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storage.id, apiIdentity.id, blobRole)
+  scope: storage
+  properties: { roleDefinitionId: blobRole, principalId: apiIdentity.properties.principalId, principalType: 'ServicePrincipal' }
+}
+resource apiQueue 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(queue.id, apiIdentity.id, queueRole)
+  scope: queue
+  properties: { roleDefinitionId: queueRole, principalId: apiIdentity.properties.principalId, principalType: 'ServicePrincipal' }
+}
+resource workerBlobs 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storage.id, workerIdentity.id, blobRole)
+  scope: storage
+  properties: { roleDefinitionId: blobRole, principalId: workerIdentity.properties.principalId, principalType: 'ServicePrincipal' }
+}
+resource workerQueue 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(queue.id, workerIdentity.id, queueRole)
+  scope: queue
+  properties: { roleDefinitionId: queueRole, principalId: workerIdentity.properties.principalId, principalType: 'ServicePrincipal' }
+}
+resource environment 'Microsoft.App/managedEnvironments@2025-01-01' = {
+  name: '${prefix}-environment'
   location: location
   properties: {
-    hardwareProfile: { vmSize: vmSize }
-    storageProfile: {
-      imageReference: {
-        publisher: 'Canonical'
-        offer: 'ubuntu-24_04-lts'
-        sku: 'server'
-        version: 'latest'
-      }
-      osDisk: {
-        createOption: 'FromImage'
-        diskSizeGB: 64
-        managedDisk: { storageAccountType: 'StandardSSD_LRS' }
-        deleteOption: 'Delete'
+    workloadProfiles: [{ name: 'Consumption', workloadProfileType: 'Consumption' }]
+  }
+}
+var commonEnv = [
+  { name: 'AZURE_STORAGE_ACCOUNT', value: storage.name }
+  { name: 'AZURE_QUEUE_NAME', value: queue.name }
+  { name: 'MAX_UPLOAD_MB', value: '200' }
+  { name: 'MAX_PAGES', value: '500' }
+  { name: 'MAX_OUTPUT_MB', value: '1024' }
+  { name: 'RETENTION_HOURS', value: '24' }
+  { name: 'DAILY_CONVERSION_LIMIT', value: string(dailyConversionLimit) }
+  { name: 'MAX_ACTIVE_JOBS', value: '10' }
+  { name: 'JOB_TIMEOUT_SECONDS', value: '1800' }
+]
+resource api 'Microsoft.App/containerApps@2025-01-01' = {
+  name: apiName
+  location: location
+  identity: { type: 'UserAssigned', userAssignedIdentities: { '${apiIdentity.id}': {} } }
+  properties: {
+    environmentId: environment.id
+    workloadProfileName: 'Consumption'
+    configuration: {
+      activeRevisionsMode: 'Single'
+      ingress: { external: true, targetPort: 8000, transport: 'http', allowInsecure: false }
+    }
+    template: {
+      containers: [{
+        name: 'api'
+        image: apiImage
+        resources: { cpu: json('0.25'), memory: '0.5Gi' }
+        env: concat(commonEnv, [
+          { name: 'APP_MODE', value: 'azure' }
+          { name: 'AZURE_CLIENT_ID', value: apiIdentity.properties.clientId }
+          { name: 'PUBLIC_ORIGIN', value: 'https://${apiName}.${environment.properties.defaultDomain}' }
+          { name: 'TRUST_AZURE_INGRESS', value: '1' }
+        ])
+        probes: [{ type: 'Liveness', httpGet: { path: '/healthz', port: 8000 }, initialDelaySeconds: 20, periodSeconds: 30 }]
+      }]
+      scale: {
+        minReplicas: 0
+        maxReplicas: 1
+        rules: [{ name: 'http', http: { metadata: { concurrentRequests: '10' } } }]
       }
     }
-    osProfile: {
-      computerName: name
-      adminUsername: adminUsername
-      customData: base64(bootstrap)
-      linuxConfiguration: {
-        disablePasswordAuthentication: true
-        provisionVMAgent: true
-        ssh: {
-          publicKeys: [
-            {
-              path: '/home/${adminUsername}/.ssh/authorized_keys'
-              keyData: sshPublicKey
-            }
-          ]
+  }
+  dependsOn: [apiBlobs, apiQueue, containers]
+}
+resource job 'Microsoft.App/jobs@2025-01-01' = {
+  name: '${prefix}-convert'
+  location: location
+  identity: { type: 'UserAssigned', userAssignedIdentities: { '${workerIdentity.id}': {} } }
+  properties: {
+    environmentId: environment.id
+    workloadProfileName: 'Consumption'
+    configuration: {
+      triggerType: 'Event'
+      replicaTimeout: 2100
+      replicaRetryLimit: 0
+      eventTriggerConfig: {
+        parallelism: 1
+        replicaCompletionCount: 1
+        scale: {
+          minExecutions: 0
+          maxExecutions: 1
+          pollingInterval: 60
+          rules: [{
+            name: 'storage-queue'
+            type: 'azure-queue'
+            identity: workerIdentity.id
+            metadata: { accountName: storage.name, queueName: queue.name, queueLength: '1', queueLengthStrategy: 'visibleonly' }
+          }]
         }
       }
     }
-    networkProfile: { networkInterfaces: [{ id: nic.id }] }
-    securityProfile: {
-      securityType: 'TrustedLaunch'
-      uefiSettings: { secureBootEnabled: true, vTpmEnabled: true }
+    template: {
+      containers: [{
+        name: 'converter'
+        image: workerImage
+        resources: { cpu: 1, memory: '2Gi' }
+        env: concat(commonEnv, [{ name: 'AZURE_CLIENT_ID', value: workerIdentity.properties.clientId }])
+      }]
     }
-    diagnosticsProfile: { bootDiagnostics: { enabled: true } }
+  }
+  dependsOn: [workerBlobs, workerQueue, containers]
+}
+resource budget 'Microsoft.Consumption/budgets@2023-11-01' = {
+  name: '${prefix}-monthly-budget'
+  properties: {
+    amount: monthlyBudget
+    category: 'Cost'
+    timeGrain: 'Monthly'
+    timePeriod: { startDate: '${budgetStart}T00:00:00Z', endDate: '${budgetEnd}T00:00:00Z' }
+    notifications: {
+      Actual80: { enabled: true, operator: 'GreaterThanOrEqualTo', threshold: 80, thresholdType: 'Actual', contactRoles: ['Owner'], contactEmails: [] }
+      Actual100: { enabled: true, operator: 'GreaterThanOrEqualTo', threshold: 100, thresholdType: 'Actual', contactRoles: ['Owner'], contactEmails: [] }
+    }
   }
 }
-output publicUrl string = 'https://${hostname}'
-output vmName string = vm.name
+output publicUrl string = 'https://${api.properties.configuration.ingress.fqdn}'
+output jobName string = job.name
+output storageAccount string = storage.name

@@ -1,0 +1,31 @@
+# Local emulator for the exact Blob/Queue/API/one-shot-worker cloud code.
+name: sejong-cloud-test
+x-env: &env
+  APP_MODE: azure
+  ALLOW_STORAGE_EMULATOR: '1'
+  AZURE_STORAGE_CONNECTION_STRING: 'DefaultEndpointsProtocol=http;AccountName=studio;AccountKey=c2Vqb25nLWxvY2FsLWRldmVsb3BtZW50LW9ubHkta2V5;BlobEndpoint=http://azurite:10000/studio;QueueEndpoint=http://azurite:10001/studio;'
+  AZURE_QUEUE_NAME: conversions
+  DAILY_CONVERSION_LIMIT: '10'
+services:
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.35.0
+    environment:
+      AZURITE_ACCOUNTS: 'studio:c2Vqb25nLWxvY2FsLWRldmVsb3BtZW50LW9ubHkta2V5'
+    command: azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --skipApiVersionCheck --silent
+    ports: ['127.0.0.1:10000:10000', '127.0.0.1:10001:10001']
+  api:
+    build: {context: ., target: api}
+    environment: *env
+    ports: ['127.0.0.1:8002:8000']
+    depends_on: [azurite]
+    restart: on-failure
+  job:
+    build: {context: ., target: cloud-worker}
+    environment: *env
+    profiles: [job]
+    depends_on: [azurite]
+    mem_limit: 2g
+    cpus: 1
+    pids_limit: 64
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
