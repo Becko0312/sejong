@@ -14,7 +14,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from app import store, tutor
+from app import builder, store, tutor
 
 PUBLIC_ORIGIN = os.getenv('PUBLIC_ORIGIN', '').rstrip('/')
 COOKIE = 'sejong_session'
@@ -222,6 +222,13 @@ def load_manifest(job_id, owner):
         raise HTTPException(404, 'Course content is not available.')
 
 
+@app.get('/api/courses/{job_id}')
+def course_structure(job_id: str, request: Request):
+    course = builder.build_course(load_manifest(job_id, identity(request)))
+    course['tutor'] = tutor.config()
+    return course
+
+
 class TutorRequest(BaseModel):
     question: str = Field(max_length=tutor.MAX_QUESTION)
     page: int = Field(ge=1)
@@ -232,11 +239,9 @@ class TutorRequest(BaseModel):
 def ask_tutor(job_id: str, body: TutorRequest, request: Request):
     owner = mutation(request)
     manifest = load_manifest(job_id, owner)
-    pages = manifest.get('pages', [])
-    page = next((p for p in pages if p.get('number') == body.page), None)
+    page = tutor.locate_page(manifest, body.page)
     if page is None:
         raise HTTPException(404, 'That page is not part of this course.')
-    page = {**page, 'page_count': manifest.get('page_count', len(pages))}
     try:
         return tutor.answer(body.question, manifest.get('title', 'this textbook'), page, body.history)
     except tutor.TutorError as exc:

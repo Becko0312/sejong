@@ -147,6 +147,17 @@ def test_course_reader_served(course):
     assert 'course.js' in res.text
 
 
+def test_course_structure_endpoint(course):
+    a, b, ha, hb, job_id = course
+    assert b.get(f'/api/courses/{job_id}').status_code == 404  # cross-session denied
+    data = a.get(f'/api/courses/{job_id}').json()
+    assert data['title'] == 'Sejong Korean 1'
+    assert data['page_count'] == 2
+    assert [p['number'] for p in data['pages']] == [1, 2]
+    assert 'words' not in data['pages'][0]  # heavy coordinates stripped for the reader
+    assert 'lessons' in data and 'tutor' in data
+
+
 def test_session_reports_tutor(course, monkeypatch):
     a, _, _, _, _ = course
     monkeypatch.setattr(tutor, 'enabled', lambda: False)

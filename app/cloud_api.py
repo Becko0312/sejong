@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from azure.core.exceptions import AzureError, ResourceNotFoundError
 from app import main as common
-from app import tutor
+from app import builder, tutor
 from app.cloud_store import CloudStore, StoreError, CHUNK_BYTES, MAX_BYTES, RETENTION, public
 
 
@@ -162,6 +162,25 @@ def course(job_id: str):
     return FileResponse(common.STATIC / 'course.html')
 
 
+async def load_manifest(job_id, request):
+    store = storage(request)
+    job = await run_in_threadpool(store.job, job_id, common.identity(request))
+    if job['status'] != 'completed':
+        raise StoreError(409, 'Conversion is not complete.')
+    try:
+        raw = await run_in_threadpool(lambda: store.export(job_id, 'manifest.json').download_blob().readall())
+    except ResourceNotFoundError:
+        raise StoreError(404, 'Course content is not available.')
+    return json.loads(raw)
+
+
+@app.get('/api/courses/{job_id}')
+async def course_structure(job_id: str, request: Request):
+    course = builder.build_course(await load_manifest(job_id, request))
+    course['tutor'] = tutor.config()
+    return course
+
+
 class TutorRequest(BaseModel):
     question: str = Field(max_length=tutor.MAX_QUESTION)
     page: int = Field(ge=1)
@@ -170,21 +189,11 @@ class TutorRequest(BaseModel):
 
 @app.post('/api/tutor/{job_id}')
 async def ask_tutor(job_id: str, body: TutorRequest, request: Request):
-    owner = common.mutation(request)
-    store = storage(request)
-    job = await run_in_threadpool(store.job, job_id, owner)
-    if job['status'] != 'completed':
-        raise StoreError(409, 'Conversion is not complete.')
-    try:
-        raw = await run_in_threadpool(lambda: store.export(job_id, 'manifest.json').download_blob().readall())
-    except ResourceNotFoundError:
-        raise StoreError(404, 'Course content is not available.')
-    manifest = json.loads(raw)
-    pages = manifest.get('pages', [])
-    page = next((p for p in pages if p.get('number') == body.page), None)
+    common.mutation(request)
+    manifest = await load_manifest(job_id, request)
+    page = tutor.locate_page(manifest, body.page)
     if page is None:
         raise StoreError(404, 'That page is not part of this course.')
-    page = {**page, 'page_count': manifest.get('page_count', len(pages))}
     try:
         return await run_in_threadpool(tutor.answer, body.question, manifest.get('title', 'this textbook'), page, body.history)
     except tutor.TutorError as exc:

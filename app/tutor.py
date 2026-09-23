@@ -66,6 +66,20 @@ def config():
     return {'enabled': on, 'provider': provider() if on else None, 'model': model_name() if on else None}
 
 
+def locate_page(manifest, number):
+    """The manifest page plus page_count and the lesson it belongs to, or None."""
+    from app import builder
+    pages = manifest.get('pages', [])
+    page = next((p for p in pages if p.get('number') == number), None)
+    if page is None:
+        return None
+    lessons, _ = builder.detect_lessons(pages)
+    lesson = next((l for l in lessons if l['start_page'] <= number <= l['end_page']), None)
+    return {**page, 'page_count': manifest.get('page_count', len(pages)),
+            'lesson_index': lesson['index'] if lesson else None,
+            'lesson_title': lesson['title'] if lesson else None}
+
+
 def _page_context(book_title, page):
     number = page.get('number')
     total = page.get('page_count')
@@ -74,6 +88,8 @@ def _page_context(book_title, page):
     header = f"Textbook: {book_title}\nCurrent page: {number}"
     if total:
         header += f" of {total}"
+    if page.get('lesson_title'):
+        header += f"\nLesson {page.get('lesson_index')}: {page['lesson_title']}"
     header += f"\nText source: {source} (ocr = machine-recognized, may contain errors)"
     # Delimit the untrusted page text so the model treats it as data, not instructions.
     return f"{header}\n\n<page_text>\n{text}\n</page_text>"

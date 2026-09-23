@@ -1,71 +1,145 @@
 'use strict';
-// Book2Course reader: renders a converted book as a course and drives the AI tutor.
+// Book2Course reader: renders a converted book as a lesson-structured course + AI tutor.
 const app = document.getElementById('app');
 const jobId = decodeURIComponent(location.pathname.replace(/^\/course\//, '').replace(/\/$/, ''));
-
-const state = { csrf: '', tutor: { enabled: false }, pages: [], title: '', current: 1, history: [], busy: false };
+const state = { csrf: '', tutor: { enabled: false }, course: null, pages: [], lessons: [], title: '', current: 0, history: [], busy: false };
 
 const el = {
   title: document.getElementById('book-title'), sub: document.getElementById('book-sub'),
-  tocList: document.getElementById('toc-list'), pageLabel: document.getElementById('page-label'),
+  courseHome: document.getElementById('course-home'), tocList: document.getElementById('toc-list'),
+  pageLabel: document.getElementById('page-label'), lessonLabel: document.getElementById('lesson-label'),
   image: document.getElementById('page-image'), text: document.getElementById('page-text'),
-  flag: document.getElementById('page-flag'), textBox: document.getElementById('page-text-box'),
-  prev: document.getElementById('prev'), next: document.getElementById('next'),
+  flag: document.getElementById('page-flag'), prev: document.getElementById('prev'), next: document.getElementById('next'),
+  homeBtn: document.getElementById('home-btn'), home: document.getElementById('home'), stage: document.getElementById('stage'),
+  homeTitle: document.getElementById('home-title'), homeMeta: document.getElementById('home-meta'),
+  homeEyebrow: document.getElementById('home-eyebrow'), lessonGrid: document.getElementById('lesson-grid'),
   chat: document.getElementById('chat'), composer: document.getElementById('composer'),
   question: document.getElementById('question'), send: document.getElementById('send'),
   mic: document.getElementById('mic'), speak: document.getElementById('speak'),
   micLang: document.getElementById('mic-lang'), status: document.getElementById('tutor-status'),
   tutorPanel: document.getElementById('tutor'), tutorToggle: document.getElementById('tutor-toggle'),
 };
+const LANG = { korean: 'Korean', japanese: 'Japanese', chinese: 'Chinese', english: 'English' };
 
 async function boot() {
   try {
     const session = await fetch('/api/session').then((r) => r.json());
     state.csrf = session.csrf;
-    state.tutor = (session.tutor) || { enabled: false };
-    const manifest = await fetch(`/books/${jobId}/manifest.json`).then((r) => {
+    const course = await fetch(`/api/courses/${jobId}`).then((r) => {
       if (!r.ok) throw new Error(r.status === 404 ? 'This course was not found, or its 24-hour access has expired.' : 'Could not load this course.');
       return r.json();
     });
-    state.title = manifest.title || 'Course';
-    state.pages = manifest.pages || [];
+    state.course = course;
+    state.pages = course.pages || [];
+    state.lessons = course.lessons || [];
+    state.title = course.title || 'Course';
+    state.tutor = course.tutor || session.tutor || { enabled: false };
     if (!state.pages.length) throw new Error('This course has no pages.');
     el.title.textContent = state.title;
-    el.sub.textContent = `${state.pages.length} pages${manifest.review_required_pages ? ` · ${manifest.review_required_pages} need review` : ''}`;
+    const langBit = course.language ? `${LANG[course.language] || course.language} · ` : '';
+    el.sub.textContent = `${langBit}${state.pages.length} pages${state.lessons.length ? ` · ${state.lessons.length} lessons` : ''}`;
     document.title = `${state.title} · Book2Course`;
     buildToc();
+    buildHome();
     setupTutor();
     const fromHash = parseInt(location.hash.replace('#page-', ''), 10);
-    show(Number.isInteger(fromHash) ? fromHash : 1);
+    if (Number.isInteger(fromHash)) show(fromHash); else showHome();
     app.classList.remove('loading');
   } catch (err) {
     app.classList.remove('loading');
     el.title.textContent = 'Unavailable';
     el.sub.textContent = err.message;
-    el.chat.innerHTML = '';
-    addNote(err.message);
+    showHome();
+    el.lessonGrid.innerHTML = '';
+    el.homeTitle.textContent = 'Unavailable';
+    el.homeMeta.textContent = err.message;
   }
 }
 
-function buildToc() {
-  const frag = document.createDocumentFragment();
-  for (const page of state.pages) {
-    const b = document.createElement('button');
-    b.className = 'toc-item';
-    b.dataset.page = page.number;
-    const label = document.createElement('span');
-    label.textContent = `Page ${page.number}`;
-    b.appendChild(label);
-    if (page.needs_review) {
-      const rev = document.createElement('span');
-      rev.className = 'rev';
-      rev.textContent = 'REVIEW';
-      b.appendChild(rev);
-    }
-    b.addEventListener('click', () => show(page.number));
-    frag.appendChild(b);
+/* ---------- Table of contents ---------- */
+function pageButton(number, label) {
+  const b = document.createElement('button');
+  b.className = 'toc-item';
+  b.dataset.page = number;
+  const span = document.createElement('span');
+  span.textContent = label || `Page ${number}`;
+  b.appendChild(span);
+  const page = state.pages.find((p) => p.number === number);
+  if (page && page.needs_review) {
+    const rev = document.createElement('span');
+    rev.className = 'rev';
+    rev.textContent = 'REVIEW';
+    b.appendChild(rev);
   }
-  el.tocList.appendChild(frag);
+  b.addEventListener('click', () => show(number));
+  return b;
+}
+
+function buildToc() {
+  el.tocList.innerHTML = '';
+  if (!state.lessons.length) {
+    for (const page of state.pages) el.tocList.appendChild(pageButton(page.number));
+    return;
+  }
+  const front = (state.course.front_pages || []);
+  if (front.length) el.tocList.appendChild(pageGroup('Front matter', front));
+  for (const lesson of state.lessons) {
+    const pages = [];
+    for (let n = lesson.start_page; n <= lesson.end_page; n++) pages.push(n);
+    el.tocList.appendChild(pageGroup(`${lesson.index}. ${lesson.title || 'Lesson ' + lesson.index}`, pages, lesson.index));
+  }
+}
+
+function pageGroup(label, pageNumbers, lessonIndex) {
+  const details = document.createElement('details');
+  details.className = 'toc-group';
+  if (lessonIndex != null) details.dataset.lesson = lessonIndex;
+  const summary = document.createElement('summary');
+  summary.textContent = label;
+  details.appendChild(summary);
+  for (const n of pageNumbers) details.appendChild(pageButton(n));
+  return details;
+}
+
+/* ---------- Landing / overview ---------- */
+function buildHome() {
+  el.homeTitle.textContent = state.title;
+  el.homeEyebrow.textContent = state.course.language ? `${LANG[state.course.language] || state.course.language} course`.toUpperCase() : 'COURSE';
+  el.homeMeta.textContent = `${state.pages.length} pages${state.lessons.length ? ` · ${state.lessons.length} lessons` : ''} · Tutor ${state.tutor.enabled ? 'on' : 'off'}`;
+  el.lessonGrid.innerHTML = '';
+  if (state.lessons.length) {
+    for (const lesson of state.lessons) {
+      const card = document.createElement('button');
+      card.className = 'lesson-card';
+      card.innerHTML = `<span class="lesson-num">Lesson ${lesson.index}</span>`;
+      const h = document.createElement('strong');
+      h.textContent = lesson.title || `Lesson ${lesson.index}`;
+      card.appendChild(h);
+      const meta = document.createElement('small');
+      meta.textContent = lesson.start_page === lesson.end_page ? `Page ${lesson.start_page}` : `Pages ${lesson.start_page}–${lesson.end_page}`;
+      card.appendChild(meta);
+      card.addEventListener('click', () => show(lesson.start_page));
+      el.lessonGrid.appendChild(card);
+    }
+  } else {
+    const card = document.createElement('button');
+    card.className = 'lesson-card wide';
+    card.innerHTML = '<strong>Start reading</strong><small>This book has no detected lessons — open it page by page.</small>';
+    card.addEventListener('click', () => show(1));
+    el.lessonGrid.appendChild(card);
+  }
+}
+
+/* ---------- Views ---------- */
+function showHome() {
+  state.current = 0;
+  location.hash = '';
+  el.home.hidden = false;
+  el.stage.hidden = true;
+  el.lessonLabel.textContent = '';
+  el.pageLabel.textContent = `${state.pages.length} pages`;
+  el.prev.disabled = el.next.disabled = false;
+  for (const item of el.tocList.querySelectorAll('.toc-item')) item.classList.remove('current');
 }
 
 function show(number) {
@@ -73,6 +147,8 @@ function show(number) {
   if (!page) return;
   state.current = number;
   location.hash = `page-${number}`;
+  el.home.hidden = true;
+  el.stage.hidden = false;
   el.pageLabel.textContent = `Page ${number} of ${state.pages.length}`;
   el.image.src = `/books/${jobId}/page-${number}.png`;
   el.image.alt = `Page ${number}`;
@@ -80,12 +156,15 @@ function show(number) {
   el.text.textContent = text || 'No text was detected on this page.';
   el.flag.textContent = page.text_source === 'ocr' ? 'Machine-recognized (OCR) text — may contain errors.'
     : (page.needs_ocr ? 'No embedded text on this page.' : '');
+  const lesson = state.lessons.find((l) => l.index === page.lesson);
+  el.lessonLabel.textContent = lesson ? `${lesson.index}. ${lesson.title || 'Lesson ' + lesson.index}` : '';
   el.prev.disabled = number <= 1;
   el.next.disabled = number >= state.pages.length;
-  for (const item of el.tocList.children) item.classList.toggle('current', Number(item.dataset.page) === number);
+  for (const item of el.tocList.querySelectorAll('.toc-item')) item.classList.toggle('current', Number(item.dataset.page) === number);
+  if (lesson) { const g = el.tocList.querySelector(`.toc-group[data-lesson="${lesson.index}"]`); if (g) g.open = true; }
   const cur = el.tocList.querySelector('.toc-item.current');
   if (cur) cur.scrollIntoView({ block: 'nearest' });
-  document.querySelector('.stage').scrollTop = 0;
+  el.stage.scrollTop = 0;
 }
 
 /* ---------- Tutor ---------- */
@@ -93,14 +172,12 @@ function setupTutor() {
   if (state.tutor.enabled) {
     el.status.textContent = 'Online';
     el.status.className = 'tutor-status on';
-    addBot(`Сайн байна уу! 👋 I'm your Korean tutor. Open any page and ask me about the words, grammar, or how to say something. You can type or tap 🎤 to speak.`);
+    addBot(`Сайн байна уу! 👋 I'm your language tutor. Open any lesson or page and ask me about the words, grammar, or how to say something. You can type or tap 🎤 to speak.`);
   } else {
     el.status.textContent = 'Offline';
     el.status.className = 'tutor-status off';
     addNote('The AI tutor is not switched on for this server. You can still read every page of the course.');
-    el.question.disabled = true;
-    el.send.disabled = true;
-    el.mic.disabled = true;
+    el.question.disabled = el.send.disabled = el.mic.disabled = true;
   }
   setupMic();
 }
@@ -109,6 +186,7 @@ el.composer.addEventListener('submit', async (event) => {
   event.preventDefault();
   const question = el.question.value.trim();
   if (!question || state.busy || !state.tutor.enabled) return;
+  const page = state.current || 1;
   addUser(question);
   el.question.value = '';
   el.question.style.height = 'auto';
@@ -117,9 +195,8 @@ el.composer.addEventListener('submit', async (event) => {
   const typing = addTyping();
   try {
     const res = await fetch(`/api/tutor/${jobId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrf },
-      body: JSON.stringify({ question, page: state.current, history: state.history.slice(-10) }),
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrf },
+      body: JSON.stringify({ question, page, history: state.history.slice(-10) }),
     });
     const data = await res.json().catch(() => ({}));
     typing.remove();
@@ -157,14 +234,13 @@ const addUser = (t) => bubble('user', t);
 const addBot = (t) => bubble('bot', t);
 const addErr = (t) => bubble('err', t);
 const addNote = (t) => bubble('note', t);
-function addTyping() { const d = bubble('bot typing', 'Tutor is thinking…'); return d; }
+const addTyping = () => bubble('bot typing', 'Tutor is thinking…');
 
 /* ---------- Voice ---------- */
 function setupMic() {
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Recognition || !state.tutor.enabled) { el.mic.disabled = true; el.mic.title = 'Voice input is not available in this browser'; return; }
-  let recognizer = null;
-  let recording = false;
+  let recognizer = null, recording = false;
   el.mic.addEventListener('click', () => {
     if (recording) { recognizer && recognizer.stop(); return; }
     recognizer = new Recognition();
@@ -176,11 +252,7 @@ function setupMic() {
     recognizer.onend = () => { recording = false; el.mic.classList.remove('recording'); };
     recognizer.onresult = (event) => {
       const said = Array.from(event.results).map((r) => r[0].transcript).join(' ').trim();
-      if (said) {
-        el.question.value = (el.question.value ? el.question.value + ' ' : '') + said;
-        el.question.dispatchEvent(new Event('input'));
-        el.question.focus();
-      }
+      if (said) { el.question.value = (el.question.value ? el.question.value + ' ' : '') + said; el.question.dispatchEvent(new Event('input')); el.question.focus(); }
     };
     try { recognizer.start(); } catch (_) { /* already started */ }
   });
@@ -190,20 +262,22 @@ function speak(text) {
   if (!('speechSynthesis' in window)) return;
   window.speechSynthesis.cancel();
   const utter = new SpeechSynthesisUtterance(text);
-  // Replies mix Mongolian and Korean; a Korean voice reads the 한글 examples best.
-  utter.lang = 'ko-KR';
-  const voice = window.speechSynthesis.getVoices().find((v) => v.lang && v.lang.startsWith('ko'));
+  const pref = { korean: 'ko', japanese: 'ja', chinese: 'zh' }[state.course && state.course.language] || 'ko';
+  utter.lang = pref + '-' + pref.toUpperCase();
+  const voice = window.speechSynthesis.getVoices().find((v) => v.lang && v.lang.startsWith(pref));
   if (voice) utter.voice = voice;
   window.speechSynthesis.speak(utter);
 }
 
 /* ---------- Navigation & layout ---------- */
-el.prev.addEventListener('click', () => show(state.current - 1));
-el.next.addEventListener('click', () => show(state.current + 1));
+el.homeBtn.addEventListener('click', showHome);
+el.courseHome.addEventListener('click', showHome);
+el.prev.addEventListener('click', () => show((state.current || 1) - 1));
+el.next.addEventListener('click', () => show((state.current || 0) + 1));
 document.addEventListener('keydown', (event) => {
   if (document.activeElement === el.question) return;
-  if (event.key === 'ArrowLeft') show(state.current - 1);
-  if (event.key === 'ArrowRight') show(state.current + 1);
+  if (event.key === 'ArrowLeft' && state.current) show(state.current - 1);
+  if (event.key === 'ArrowRight') show((state.current || 0) + 1);
 });
 el.tutorToggle.addEventListener('click', () => {
   const hidden = el.tutorPanel.hasAttribute('hidden');

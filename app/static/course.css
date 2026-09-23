@@ -72,3 +72,34 @@ button:disabled{opacity:.5;cursor:default}
   #toc-list{max-height:160px}
   .tutor{border-left:0;border-top:1px solid #dce2d7;height:70vh}
 }
+
+/* ---- Course website: clickable title, lesson groups, landing ---- */
+.course-home{display:block;width:100%;text-align:left;background:transparent;color:inherit;padding:0 22px 14px;border-bottom:1px solid #dce2d7;border-radius:0}
+.course-home:hover h1{color:#2c6a4c}
+.course-home h1{font-family:Georgia,serif;font-weight:400;font-size:21px;letter-spacing:-.5px;margin:0;line-height:1.2;color:#22483d}
+.course-home .toc-sub{padding:8px 0 0;border:0}
+
+.toc-group{border-radius:6px}
+.toc-group>summary{list-style:none;cursor:pointer;padding:9px 12px;font-size:12px;font-weight:600;color:#2f5040;border-radius:6px}
+.toc-group>summary::-webkit-details-marker{display:none}
+.toc-group>summary::before{content:'▸';display:inline-block;width:14px;color:#8aa08f;transition:transform .15s}
+.toc-group[open]>summary::before{transform:rotate(90deg)}
+.toc-group>summary:hover{background:#e2e9dc}
+.toc-group .toc-item{padding-left:26px;font-size:12px}
+
+.lesson-label{font-size:11px;color:#5f7a67;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.home{flex:1;overflow-y:auto;padding:40px 32px}
+.home-inner{max-width:900px;margin:0 auto}
+.home .eyebrow{font-size:10px;letter-spacing:2px;font-weight:700;color:#6d846e;margin:0}
+.home h2{font-family:Georgia,serif;font-weight:400;font-size:34px;letter-spacing:-1px;margin:10px 0 8px;color:#23473a}
+.home-meta{font-size:12px;color:#7a8577;margin:0 0 28px}
+.lesson-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+.lesson-card{display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left;background:#fff;border:1px solid #dfe5da;border-radius:10px;padding:16px;color:#2c3e33;box-shadow:0 3px 12px rgba(40,60,45,.05)}
+.lesson-card:hover{border-color:#5c8468;box-shadow:0 6px 18px rgba(40,60,45,.1);transform:translateY(-1px)}
+.lesson-card.wide{grid-column:1/-1}
+.lesson-num{font-size:9px;letter-spacing:1.5px;font-weight:700;color:#7e9573;background:#eef4ea;border-radius:20px;padding:4px 9px}
+.lesson-card strong{font-size:14px;font-weight:600;line-height:1.35}
+.lesson-card small{font-size:11px;color:#8a9484}
+
+.stage[hidden],.home[hidden],[hidden]{display:none!important}
