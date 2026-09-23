@@ -36,10 +36,11 @@ def _markers(text):
 
 def _clean_title(segment):
     """A lesson title from the text after a marker: stop at the printed page number."""
-    seg = segment.strip(' .·-–—:|\t')
-    seg = re.split(r'\s+\d{1,4}(?:\s|$)', seg, maxsplit=1)[0]
-    seg = re.split(r'[\n\r|]', seg, maxsplit=1)[0].strip()
-    return seg[:MAX_TITLE] or None
+    seg = segment.strip(' .·ㆍ-–—:|\t')
+    seg = re.split(r'\s+\d{1,4}(?:\s|$)', seg, maxsplit=1)[0]      # printed page number
+    seg = re.split(r'[\n\r|]', seg, maxsplit=1)[0]
+    seg = re.split(r'[Ѐ-ӿ]', seg, maxsplit=1)[0]        # a Cyrillic (e.g. Mongolian) translation
+    return seg.strip(' .·ㆍ-–—:|\t')[:MAX_TITLE] or None
 
 
 def _toc_titles(pages):
@@ -86,7 +87,7 @@ def detect_lessons(pages):
             continue
         number, _, marker_end, lang = head[0]
         language = language or lang
-        title = toc_titles.get(number) or _clean_title(text[marker_end:marker_end + 120])
+        title = toc_titles.get(number) or _clean_title(text[marker_end:marker_end + 70])
         lessons.append({'index': number, 'title': title, 'start_page': page['number']})
         expected += 1
     last = pages[-1]['number']
