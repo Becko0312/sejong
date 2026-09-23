@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Course · Book2Course</title>
+<link rel="stylesheet" href="/static/course.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%2322483d'/%3E%3Ctext x='8' y='29' fill='white' font-size='27'%3E한%3C/text%3E%3C/svg%3E"></head>
+<body>
+<div id="app" class="loading">
+  <aside class="toc" id="toc">
+    <a class="back" href="/">← Workspace</a>
+    <h1 id="book-title">Loading course…</h1>
+    <p class="toc-sub" id="book-sub"></p>
+    <nav id="toc-list" aria-label="Pages"></nav>
+  </aside>
+
+  <main class="reader">
+    <header class="reader-bar">
+      <button id="prev" class="pager" aria-label="Previous page">‹</button>
+      <span id="page-label" class="page-label">—</span>
+      <button id="next" class="pager" aria-label="Next page">›</button>
+      <span class="spacer"></span>
+      <button id="tutor-toggle" class="tutor-toggle" aria-expanded="true">◉ Tutor</button>
+    </header>
+    <div class="stage" id="stage">
+      <div class="page-frame" id="page-frame"><img id="page-image" alt="" ></div>
+      <details class="page-text" id="page-text-box"><summary>Page text</summary><p id="page-flag" class="flag"></p><pre id="page-text"></pre></details>
+    </div>
+  </main>
+
+  <section class="tutor" id="tutor" aria-label="AI tutor">
+    <header class="tutor-head">
+      <span class="tutor-title">◉ AI Tutor</span>
+      <span id="tutor-status" class="tutor-status"></span>
+    </header>
+    <div class="chat" id="chat" aria-live="polite"></div>
+    <form class="composer" id="composer">
+      <div class="composer-row">
+        <button type="button" id="mic" class="mic" title="Speak your question" aria-label="Speak">🎤</button>
+        <textarea id="question" rows="1" placeholder="Ask about this page…" maxlength="2000"></textarea>
+        <button type="submit" id="send" class="send" aria-label="Send">➤</button>
+      </div>
+      <div class="composer-opts">
+        <label><input type="checkbox" id="speak"> Read answers aloud</label>
+        <select id="mic-lang" aria-label="Speech language" title="Speech recognition language">
+          <option value="ko-KR">Speak: Korean</option>
+          <option value="en-US">Speak: English</option>
+          <option value="mn-MN">Speak: Mongolian</option>
+        </select>
+      </div>
+    </form>
+  </section>
+</div>
+<script src="/static/course.js"></script>
+</body></html>

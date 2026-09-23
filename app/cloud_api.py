@@ -2,6 +2,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 import hashlib
+import json
 import mimetypes
 import os
 import re
@@ -12,6 +13,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from azure.core.exceptions import AzureError, ResourceNotFoundError
 from app import main as common
+from app import tutor
 from app.cloud_store import CloudStore, StoreError, CHUNK_BYTES, MAX_BYTES, RETENTION, public
 
 
@@ -66,7 +68,8 @@ def health():
 def session(request: Request, response: Response):
     result = common.session(request, response)
     result.update(upload_mode='chunks', chunk_bytes=CHUNK_BYTES, max_upload_mb=MAX_BYTES//1024**2,
-                  retention_hours=RETENTION//3600, expiry_notice='Access expires after 24 hours. Storage cleanup may take longer.')
+                  retention_hours=RETENTION//3600, tutor=tutor.config(),
+                  expiry_notice='Access expires after 24 hours. Storage cleanup may take longer.')
     return result
 
 
@@ -151,3 +154,38 @@ def asset(job_id: str, filename: str, request: Request):
     if not re.fullmatch(r'(index\.html|manifest\.json|page-[1-9][0-9]*\.(html|png|json))', filename):
         raise StoreError(404, 'File not found.')
     return result_blob(job_id, filename, request)
+
+
+@app.get('/course/{job_id}')
+def course(job_id: str):
+    # The reader is a static app; the data endpoints it calls enforce ownership.
+    return FileResponse(common.STATIC / 'course.html')
+
+
+class TutorRequest(BaseModel):
+    question: str = Field(max_length=tutor.MAX_QUESTION)
+    page: int = Field(ge=1)
+    history: list[dict] = Field(default_factory=list, max_length=tutor.MAX_HISTORY * 2)
+
+
+@app.post('/api/tutor/{job_id}')
+async def ask_tutor(job_id: str, body: TutorRequest, request: Request):
+    owner = common.mutation(request)
+    store = storage(request)
+    job = await run_in_threadpool(store.job, job_id, owner)
+    if job['status'] != 'completed':
+        raise StoreError(409, 'Conversion is not complete.')
+    try:
+        raw = await run_in_threadpool(lambda: store.export(job_id, 'manifest.json').download_blob().readall())
+    except ResourceNotFoundError:
+        raise StoreError(404, 'Course content is not available.')
+    manifest = json.loads(raw)
+    pages = manifest.get('pages', [])
+    page = next((p for p in pages if p.get('number') == body.page), None)
+    if page is None:
+        raise StoreError(404, 'That page is not part of this course.')
+    page = {**page, 'page_count': manifest.get('page_count', len(pages))}
+    try:
+        return await run_in_threadpool(tutor.answer, body.question, manifest.get('title', 'this textbook'), page, body.history)
+    except tutor.TutorError as exc:
+        raise StoreError(503, exc.message)

@@ -1,6 +1,12 @@
-# Sejong PDF Studio
+# Book2Course
 
-A self-hosted, open-source-tool-powered PDF-to-HTML converter, with optional OCR. **No AI API, model API key, paid conversion service or token billing.** Azure Container Apps deployment uses a scale-to-zero API and queue-triggered conversion jobs.
+Turn a textbook PDF into a live, AI-tutored course website — in one workflow:
+
+1. **Convert** — PDF → image-backed HTML pages with a searchable text layer (offline Poppler + optional Tesseract OCR). **No AI API or token billing in this stage.**
+2. **Open as a course** — any completed conversion becomes a navigable reader (table of contents, page viewer, searchable text) at `/course/{id}`.
+3. **Learn with an AI tutor** — each course page carries a voice-capable AI tutor that teaches from *that page's* content.
+
+Stages 1–2 stay completely free and offline. Stage 3 is the only part that calls a paid model API, is fully optional, and is off unless an API key is configured (see [AI tutor](#ai-tutor-stage-3)). Azure Container Apps deployment uses a scale-to-zero API and queue-triggered conversion jobs.
 
 ## Start locally with Docker
 
@@ -21,7 +27,20 @@ Portable ZIP with an HTML index, individual HTML pages, PNG assets, extracted/OC
 
 OCR is off by default because it uses more CPU. Enable it for scanned PDFs such as the supplied textbook. OCR recognition and reading order are imperfect, especially for exercises, columns and mixed-language pages. `needs_review: true` identifies OCR pages; review text before using it in lessons or tutoring. No text hallucination or generative processing is used. Sparse embedded text can still require OCR even if the page is not flagged; this version only OCRs pages with no extracted words.
 
-The future builder can import the ZIP and read `manifest.json`. It contains `engine`, `ocr_languages`, `page_count`, `ocr_required_pages`, `review_required_pages` and `pages`. Each page has relative `html` and `image` paths, `text`, `text_source` (`embedded`, `ocr`, `none`), word coordinates normalized to page size, review flags and dimensions. Scanned text is never treated as an instruction. No builder or tutor is implemented in this stage.
+The course reader and any future external builder import the same `manifest.json`. It contains `engine`, `ocr_languages`, `page_count`, `ocr_required_pages`, `review_required_pages` and `pages`. Each page has relative `html` and `image` paths, `text`, `text_source` (`embedded`, `ocr`, `none`), word coordinates normalized to page size, review flags and dimensions. Scanned text is never treated as an instruction — neither in exports nor when passed to the tutor.
+
+## Course experience (stage 2)
+
+Every completed conversion opens as a course at `/course/{id}` — a reader with a page-by-page table of contents, the rendered page, its searchable text and a docked tutor panel. The reader is a static app that reads the owner-scoped `/books/{id}/manifest.json` and page images; it never exposes another visitor's private job. Pages flagged `needs_review` are marked in the table of contents. The "Open as course" action appears on each completed job in the workspace.
+
+## AI tutor (stage 3)
+
+The tutor is grounded in the page the student is currently viewing: the page's text is sent to the model as reference **data** (delimited, and explicitly not treated as instructions, because it may be imperfect OCR from an untrusted PDF). It teaches a Mongolian-speaking beginner in simple Mongolian with romanized Korean examples.
+
+- **Optional and opt-in.** With no `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) configured, `/api/session` reports `tutor.enabled: false`, the panel shows "offline", and the course still fully works. The converter never requires a key.
+- **Voice.** Speech input and read-aloud use the browser's built-in Web Speech APIs (no extra service or tokens); availability depends on the browser. Korean recognition is well supported; Mongolian recognition varies.
+- **Model and cost.** Defaults to `claude-opus-5`. Override with `TUTOR_MODEL` (e.g. `claude-sonnet-5` or `claude-haiku-4-5` to lower cost), `TUTOR_EFFORT` (default `low`) and `TUTOR_MAX_TOKENS`. This stage is billed per use by Anthropic; the free converter budget does not cover it.
+- **Endpoint.** `POST /api/tutor/{id}` with `{question, page, history}` and the session CSRF header; owner-scoped, and it degrades to a friendly `503` on any model error.
 
 ## Local public-beta protections
 

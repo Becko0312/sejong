@@ -2,6 +2,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -12,7 +13,8 @@ import uuid
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from app import store
+from pydantic import BaseModel, Field
+from app import store, tutor
 
 PUBLIC_ORIGIN = os.getenv('PUBLIC_ORIGIN', '').rstrip('/')
 COOKIE = 'sejong_session'
@@ -80,7 +82,8 @@ def session(request: Request, response: Response):
         token = secrets.token_hex(32)
     response.set_cookie(COOKIE, token, httponly=True, secure=bool(PUBLIC_ORIGIN), samesite='strict', max_age=30*86400)
     return {'csrf': hashlib.sha256(token.encode()).hexdigest(), 'max_upload_mb': store.MAX_BYTES // 1024 // 1024,
-            'retention_hours': store.RETENTION // 3600, 'max_pages': int(os.getenv('MAX_PAGES', '500'))}
+            'retention_hours': store.RETENTION // 3600, 'max_pages': int(os.getenv('MAX_PAGES', '500')),
+            'tutor': tutor.config()}
 
 
 def get_job(job_id, owner):
@@ -201,3 +204,40 @@ def asset(job_id: str, filename: str, request: Request):
     if not path.is_file():
         raise HTTPException(404, 'Page not found.')
     return FileResponse(path, headers={'Content-Security-Policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'self'; sandbox allow-same-origin"})
+
+
+@app.get('/course/{job_id}')
+def course(job_id: str):
+    # The reader is a static app; ownership is enforced by the data endpoints it calls.
+    return FileResponse(STATIC / 'course.html')
+
+
+def load_manifest(job_id, owner):
+    if get_job(job_id, owner)['status'] != 'completed':
+        raise HTTPException(409, 'Conversion is not complete.')
+    path = store.DATA / job_id / 'output' / 'manifest.json'
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        raise HTTPException(404, 'Course content is not available.')
+
+
+class TutorRequest(BaseModel):
+    question: str = Field(max_length=tutor.MAX_QUESTION)
+    page: int = Field(ge=1)
+    history: list[dict] = Field(default_factory=list, max_length=tutor.MAX_HISTORY * 2)
+
+
+@app.post('/api/tutor/{job_id}')
+def ask_tutor(job_id: str, body: TutorRequest, request: Request):
+    owner = mutation(request)
+    manifest = load_manifest(job_id, owner)
+    pages = manifest.get('pages', [])
+    page = next((p for p in pages if p.get('number') == body.page), None)
+    if page is None:
+        raise HTTPException(404, 'That page is not part of this course.')
+    page = {**page, 'page_count': manifest.get('page_count', len(pages))}
+    try:
+        return tutor.answer(body.question, manifest.get('title', 'this textbook'), page, body.history)
+    except tutor.TutorError as exc:
+        raise HTTPException(503, exc.message)

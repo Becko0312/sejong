@@ -101,6 +101,33 @@ def test_validation_limits_and_worker_fencing(cloud,monkeypatch):
     assert a.post('/api/uploads',json={'name':'second.pdf','size':len(data)},headers=ha).status_code==429
 
 
+def test_cloud_course_and_tutor(cloud, monkeypatch):
+    import types
+    from app import tutor
+    store, a, b, ha, hb = cloud
+    job = upload(a, ha)
+    from app.cloud_job import run_once
+    assert run_once(store) == 0
+    assert a.get(f'/course/{job["id"]}').status_code == 200
+    capture = {}
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'sk-ant-test')
+    monkeypatch.setattr(tutor, 'enabled', lambda: True)
+    import anthropic
+
+    class Messages:
+        def create(self, **kwargs):
+            capture.update(kwargs)
+            return types.SimpleNamespace(content=[types.SimpleNamespace(type='text', text='좋아요 (johayo)')], model='claude-opus-5')
+    monkeypatch.setattr(anthropic, 'Anthropic', lambda *args, **kwargs: types.SimpleNamespace(messages=Messages()))
+    payload = {'question': 'teach me page 1', 'page': 1, 'history': []}
+    assert b.post(f'/api/tutor/{job["id"]}', json=payload, headers=hb).status_code == 404
+    res = a.post(f'/api/tutor/{job["id"]}', json=payload, headers=ha)
+    assert res.status_code == 200, res.text
+    assert '좋아요' in res.json()['reply']
+    assert '<page_text>' in capture['messages'][-1]['content']
+    assert a.post(f'/api/tutor/{job["id"]}', json={'question': 'x', 'page': 99}, headers=ha).status_code == 404
+
+
 def test_sandbox_denies_network():
     import subprocess,sys
     result=subprocess.run([sys.executable,'-c', 'from app.cloud_convert import sandbox; sandbox(); import socket; socket.socket()'],capture_output=True)
