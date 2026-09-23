@@ -2,7 +2,8 @@
 // Book2Course reader: renders a converted book as a lesson-structured course + AI tutor.
 const app = document.getElementById('app');
 const jobId = decodeURIComponent(location.pathname.replace(/^\/course\//, '').replace(/\/$/, ''));
-const state = { csrf: '', tutor: { enabled: false }, course: null, pages: [], lessons: [], title: '', current: 0, history: [], busy: false };
+const state = { csrf: '', tutor: { enabled: false }, course: null, pages: [], lessons: [], title: '', current: 0, history: [], busy: false, taught: new Set() };
+const MODE_LABELS = { intro: 'Start teaching this page', explain: '📖 Explain this page', vocab: '🔤 Teach the vocabulary', quiz: '✍️ Quiz me on this page', practice: '🗣️ Practice speaking' };
 
 const el = {
   title: document.getElementById('book-title'), sub: document.getElementById('book-sub'),
@@ -18,6 +19,7 @@ const el = {
   mic: document.getElementById('mic'), speak: document.getElementById('speak'),
   micLang: document.getElementById('mic-lang'), status: document.getElementById('tutor-status'),
   tutorPanel: document.getElementById('tutor'), tutorToggle: document.getElementById('tutor-toggle'),
+  teachActions: document.getElementById('teach-actions'),
 };
 const LANG = { korean: 'Korean', japanese: 'Japanese', chinese: 'Chinese', english: 'English' };
 
@@ -136,6 +138,7 @@ function showHome() {
   location.hash = '';
   el.home.hidden = false;
   el.stage.hidden = true;
+  el.teachActions.hidden = true;
   el.lessonLabel.textContent = '';
   el.pageLabel.textContent = `${state.pages.length} pages`;
   el.prev.disabled = el.next.disabled = false;
@@ -165,6 +168,8 @@ function show(number) {
   const cur = el.tocList.querySelector('.toc-item.current');
   if (cur) cur.scrollIntoView({ block: 'nearest' });
   el.stage.scrollTop = 0;
+  if (state.tutor.enabled) el.teachActions.hidden = false;
+  maybeTeachLesson(page);
 }
 
 /* ---------- Tutor ---------- */
@@ -172,7 +177,7 @@ function setupTutor() {
   if (state.tutor.enabled) {
     el.status.textContent = 'Online';
     el.status.className = 'tutor-status on';
-    addBot(`Сайн байна уу! 👋 I'm your language tutor. Open any lesson or page and ask me about the words, grammar, or how to say something. You can type or tap 🎤 to speak.`);
+    addBot(`👋 Hi! I'm your tutor. Open a lesson and I'll start teaching it — or use the buttons below to have me explain the page, teach the vocabulary, quiz you, or practice speaking. You can also type or tap 🎤 to ask anything.`);
   } else {
     el.status.textContent = 'Offline';
     el.status.className = 'tutor-status off';
@@ -182,27 +187,25 @@ function setupTutor() {
   setupMic();
 }
 
-el.composer.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const question = el.question.value.trim();
-  if (!question || state.busy || !state.tutor.enabled) return;
+// Shared tutor turn for both typed questions and one-tap teaching actions.
+async function runTutor({ question = '', mode = null, label }) {
+  if (state.busy || !state.tutor.enabled) return;
   const page = state.current || 1;
-  addUser(question);
-  el.question.value = '';
-  el.question.style.height = 'auto';
+  addUser(label || question);
   state.busy = true;
   el.send.disabled = true;
+  el.teachActions.classList.add('busy');
   const typing = addTyping();
   try {
     const res = await fetch(`/api/tutor/${jobId}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrf },
-      body: JSON.stringify({ question, page, history: state.history.slice(-10) }),
+      body: JSON.stringify({ question, mode, page, history: state.history.slice(-10) }),
     });
     const data = await res.json().catch(() => ({}));
     typing.remove();
     if (!res.ok) { addErr(data.detail || 'The tutor could not respond. Please try again.'); return; }
     addBot(data.reply);
-    state.history.push({ role: 'user', content: question }, { role: 'assistant', content: data.reply });
+    state.history.push({ role: 'user', content: label || question }, { role: 'assistant', content: data.reply });
     if (el.speak.checked) speak(data.reply);
   } catch (err) {
     typing.remove();
@@ -210,9 +213,33 @@ el.composer.addEventListener('submit', async (event) => {
   } finally {
     state.busy = false;
     el.send.disabled = false;
+    el.teachActions.classList.remove('busy');
     el.question.focus();
   }
+}
+
+el.composer.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const question = el.question.value.trim();
+  if (!question) return;
+  el.question.value = '';
+  el.question.style.height = 'auto';
+  runTutor({ question });
 });
+
+function sendTeach(mode) { runTutor({ mode, label: MODE_LABELS[mode] || 'Teach me' }); }
+for (const chip of el.teachActions.querySelectorAll('.chip')) {
+  chip.addEventListener('click', () => sendTeach(chip.dataset.mode));
+}
+
+// Proactive: when a lesson is opened for the first time, the tutor starts teaching it.
+function maybeTeachLesson(page) {
+  if (!state.tutor.enabled || state.busy) return;
+  const lesson = page && page.lesson;
+  if (lesson == null || state.taught.has(lesson)) return;
+  state.taught.add(lesson);
+  sendTeach('intro');
+}
 
 el.question.addEventListener('input', () => {
   el.question.style.height = 'auto';

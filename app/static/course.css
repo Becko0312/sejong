@@ -103,3 +103,9 @@ button:disabled{opacity:.5;cursor:default}
 .lesson-card small{font-size:11px;color:#8a9484}
 
 .stage[hidden],.home[hidden],[hidden]{display:none!important}
+
+/* Proactive teaching actions */
+.teach-actions{display:flex;flex-wrap:wrap;gap:6px;padding:10px 12px 0}
+.teach-actions.busy{opacity:.5;pointer-events:none}
+.chip{background:#eef4ea;color:#2c503f;border:1px solid #d6e2cf;border-radius:20px;padding:6px 11px;font-size:11px}
+.chip:hover{background:#e0ebda}

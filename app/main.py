@@ -230,9 +230,10 @@ def course_structure(job_id: str, request: Request):
 
 
 class TutorRequest(BaseModel):
-    question: str = Field(max_length=tutor.MAX_QUESTION)
+    question: str = Field('', max_length=tutor.MAX_QUESTION)
     page: int = Field(ge=1)
     history: list[dict] = Field(default_factory=list, max_length=tutor.MAX_HISTORY * 2)
+    mode: str | None = Field(None, max_length=20)
 
 
 @app.post('/api/tutor/{job_id}')
@@ -243,6 +244,6 @@ def ask_tutor(job_id: str, body: TutorRequest, request: Request):
     if page is None:
         raise HTTPException(404, 'That page is not part of this course.')
     try:
-        return tutor.answer(body.question, manifest.get('title', 'this textbook'), page, body.history)
+        return tutor.answer(body.question, manifest.get('title', 'this textbook'), page, body.history, body.mode)
     except tutor.TutorError as exc:
         raise HTTPException(503, exc.message)

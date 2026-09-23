@@ -112,6 +112,30 @@ def test_answer_requires_question_and_config(monkeypatch):
         tutor.answer('hi', 'Book', {'number': 1})
 
 
+def test_teaching_mode_grounds_without_a_question(monkeypatch):
+    capture = enable_tutor(monkeypatch)
+    page = {'number': 5, 'page_count': 20, 'text': '안녕하세요 hello', 'text_source': 'ocr'}
+    result = tutor.answer('', 'Sejong Korean 1', page, mode='vocab')
+    assert result['reply']
+    last = capture['messages'][-1]['content']
+    assert tutor.MODES['vocab'] in last          # the teaching instruction was injected
+    assert '<page_text>' in last and '안녕하세요' in last
+
+
+def test_unknown_teaching_mode_is_rejected(monkeypatch):
+    enable_tutor(monkeypatch)
+    with pytest.raises(tutor.TutorError):
+        tutor.answer('', 'Book', {'number': 1}, mode='sudo')
+
+
+def test_tutor_endpoint_accepts_mode(course, monkeypatch):
+    a, _, ha, _, job_id = course
+    enable_tutor(monkeypatch)
+    res = a.post(f'/api/tutor/{job_id}', json={'page': 1, 'mode': 'explain'}, headers=ha)
+    assert res.status_code == 200, res.text
+    assert res.json()['reply']
+
+
 def test_tutor_endpoint_owner_scoped_and_answers(course, monkeypatch):
     a, b, ha, hb, job_id = course
     capture = enable_tutor(monkeypatch)
