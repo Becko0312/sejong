@@ -37,10 +37,11 @@ Every completed conversion opens as a course at `/course/{id}` — a reader with
 
 The tutor is grounded in the page the student is currently viewing: the page's text is sent to the model as reference **data** (delimited, and explicitly not treated as instructions, because it may be imperfect OCR from an untrusted PDF). It teaches a Mongolian-speaking beginner in simple Mongolian with romanized Korean examples.
 
-- **Optional and opt-in.** With no `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) configured, `/api/session` reports `tutor.enabled: false`, the panel shows "offline", and the course still fully works. The converter never requires a key.
+- **Optional and opt-in.** With no provider key configured, `/api/session` reports `tutor.enabled: false`, the panel shows "offline", and the course still fully works. The converter never requires a key.
+- **Provider (`TUTOR_PROVIDER`).** `gemini` (default when `GEMINI_API_KEY` is set) calls Google's Generative Language REST API — model `GEMINI_MODEL` (default `gemini-2.5-flash`, with model thinking disabled for speed/cost). `anthropic` (needs `ANTHROPIC_API_KEY`) uses the Claude Messages API — model `TUTOR_MODEL` (default `claude-opus-5`) and `TUTOR_EFFORT` (default `low`). Both honour `TUTOR_MAX_TOKENS`. This stage is billed per use by the provider; the free converter budget does not cover it.
 - **Voice.** Speech input and read-aloud use the browser's built-in Web Speech APIs (no extra service or tokens); availability depends on the browser. Korean recognition is well supported; Mongolian recognition varies.
-- **Model and cost.** Defaults to `claude-opus-5`. Override with `TUTOR_MODEL` (e.g. `claude-sonnet-5` or `claude-haiku-4-5` to lower cost), `TUTOR_EFFORT` (default `low`) and `TUTOR_MAX_TOKENS`. This stage is billed per use by Anthropic; the free converter budget does not cover it.
 - **Endpoint.** `POST /api/tutor/{id}` with `{question, page, history}` and the session CSRF header; owner-scoped, and it degrades to a friendly `503` on any model error.
+- **Verified** end to end on the real scanned Sejong textbook: Korean/Mongolian OCR → course reader → a page-grounded `gemini-2.5-flash` tutor teaching in Mongolian with romanized Korean.
 
 ## Local public-beta protections
 
