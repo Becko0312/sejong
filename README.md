@@ -29,9 +29,11 @@ OCR is off by default because it uses more CPU. Enable it for scanned PDFs such 
 
 The course reader and any future external builder import the same `manifest.json`. It contains `engine`, `ocr_languages`, `page_count`, `ocr_required_pages`, `review_required_pages` and `pages`. Each page has relative `html` and `image` paths, `text`, `text_source` (`embedded`, `ocr`, `none`), word coordinates normalized to page size, review flags and dimensions. Scanned text is never treated as an instruction — neither in exports nor when passed to the tutor.
 
-## Course experience (stage 2)
+## Course builder (stage 2)
 
-Every completed conversion opens as a course at `/course/{id}` — a reader with a page-by-page table of contents, the rendered page, its searchable text and a docked tutor panel. The reader is a static app that reads the owner-scoped `/books/{id}/manifest.json` and page images; it never exposes another visitor's private job. Pages flagged `needs_review` are marked in the table of contents. The "Open as course" action appears on each completed job in the workspace.
+Every completed conversion opens as a real course website at `/course/{id}`: a landing page with lesson cards, a lesson-grouped collapsible table of contents, a page viewer with searchable text, and a docked tutor panel. The "Open as course" action appears on each completed job.
+
+Lessons are detected from the pages' text by `app/builder.py` using language-book numbering markers — Korean `과`/`단원`, Japanese `課`/`レッスン`, Chinese `课`, English `Lesson`/`Unit`/`Chapter`. Titles are read from the contents page; a page opens a lesson when it carries exactly one lesson number matching the next expected one near the top (contents and review pages that list several numbers are skipped). Detection is deterministic and free — **no AI is used to build the structure** (the AI is only the tutor). Books with no markers simply present a flat page list. `GET /api/courses/{id}` returns the structure (owner-scoped): `title`, `language`, `lessons` (index, title, start/end page), `front_pages`, and light per-page metadata with the heavy word coordinates stripped. The reader is a static app; ownership is enforced by that endpoint and by `/books/{id}/...`.
 
 ## AI tutor (stage 3)
 
