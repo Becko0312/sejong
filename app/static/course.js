@@ -297,6 +297,9 @@ const SPEAK_SCRIPTS = [
   { re: /[\u3400-\u4DBF\u4E00-\u9FFF]/, lang: 'zh-CN' },
 ];
 const SPEAK_VOICE_FALLBACK = { 'mn-MN': ['ru'] };
+// Parenthesized text in these scripts is real content (e.g. a Mongolian gloss);
+// anything else in parens is on-screen romanization like "(itta, eoptta)".
+const SPEAK_KEEP_PARENS = new RegExp(SPEAK_SCRIPTS.map((s) => s.re.source).join('|'));
 
 function speakScriptLang(ch) {
   for (const s of SPEAK_SCRIPTS) if (s.re.test(ch)) return s.lang;
@@ -394,8 +397,13 @@ function speakLocal(text, lang) {
   return utter;
 }
 
+function speakableText(text) {
+  // Drop markdown noise and romanizations in parens: reading aids, not speech.
+  return text.replace(/[*`]/g, '').replace(/\([^()]*\)/g, (m) => (SPEAK_KEEP_PARENS.test(m) ? m : ''));
+}
+
 async function speak(text) {
-  const segments = speakSegments(text.replace(/[*`]/g, ''));
+  const segments = speakSegments(speakableText(text));
   if (!segments.length) return;
   stopSpeaking();
   const token = ttsState.token;
