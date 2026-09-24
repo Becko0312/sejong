@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from app import auth, builder, store, tutor
+from app import auth, builder, store, tts, tutor
 
 PUBLIC_ORIGIN = os.getenv('PUBLIC_ORIGIN', '').rstrip('/')
 STATIC = Path(__file__).parent / 'static'
@@ -75,7 +75,7 @@ def require_admin(request, csrf=True):
 def account(user):
     return {'authenticated': True, 'username': user['username'], 'role': user['role'],
             'csrf': hashlib.sha256(user['token'].encode()).hexdigest() if 'token' in user else user['csrf'],
-            'tutor': tutor.config()}
+            'tutor': tutor.config(), 'tts': tts.config()}
 
 
 def set_cookie(response, token):
@@ -326,6 +326,7 @@ def course_structure(job_id: str, request: Request):
     course['source_lang'] = job.get('source_lang')
     course['target_lang'] = job.get('target_lang')
     course['tutor'] = tutor.config()
+    course['tts'] = tts.config()
     return course
 
 
@@ -368,3 +369,20 @@ def ask_tutor(job_id: str, body: TutorRequest, request: Request):
         return tutor.answer(body.question, job.get('title') or manifest.get('title', 'this textbook'), page, body.history, body.mode)
     except tutor.TutorError as exc:
         raise HTTPException(503, exc.message)
+
+
+class TtsRequest(BaseModel):
+    text: str = Field('', max_length=tts.MAX_TEXT)
+    lang: str = Field('en-US', max_length=20)
+
+
+@app.post('/api/tts')
+def text_to_speech(body: TtsRequest, request: Request):
+    # Azure neural voices for the reader's read-aloud; browsers lack mn-MN voices.
+    user = current(request)
+    check_csrf(request, user)
+    try:
+        audio = tts.synthesize(body.text, body.lang)
+    except tts.TtsError as exc:
+        raise HTTPException(503, exc.message)
+    return Response(audio, media_type='audio/mpeg')

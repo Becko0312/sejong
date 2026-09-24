@@ -2,8 +2,8 @@
 // Book2Course reader: renders a converted book as a lesson-structured course + AI tutor.
 const app = document.getElementById('app');
 const jobId = decodeURIComponent(location.pathname.replace(/^\/course\//, '').replace(/\/$/, ''));
-const API = { course: `/api/courses/${jobId}`, image: (n) => `/books/${jobId}/page-${n}.png`, tutor: `/api/tutor/${jobId}` };
-const state = { csrf: '', tutor: { enabled: false }, course: null, pages: [], lessons: [], title: '', current: 0, history: [], busy: false, taught: new Set() };
+const API = { course: `/api/courses/${jobId}`, image: (n) => `/books/${jobId}/page-${n}.png`, tutor: `/api/tutor/${jobId}`, tts: '/api/tts' };
+const state = { csrf: '', tutor: { enabled: false }, tts: { enabled: false }, course: null, pages: [], lessons: [], title: '', current: 0, history: [], busy: false, taught: new Set() };
 const MODE_LABELS = { intro: 'Start teaching this page', explain: '📖 Explain this page', vocab: '🔤 Teach the vocabulary', quiz: '✍️ Quiz me on this page', practice: '🗣️ Practice speaking' };
 
 const el = {
@@ -39,6 +39,7 @@ async function boot() {
     state.lessons = course.lessons || [];
     state.title = course.title || 'Course';
     state.tutor = course.tutor || session.tutor || { enabled: false };
+    state.tts = course.tts || { enabled: false };
     if (!state.pages.length) throw new Error('This course has no pages.');
     el.title.textContent = state.title;
     const langBit = course.language ? `${LANG[course.language] || course.language} · ` : '';
@@ -331,18 +332,63 @@ function speakVoice(lang) {
   return voice || null;
 }
 
-function speak(text) {
+const ttsState = { token: 0, audio: null };
+
+function stopSpeaking() {
+  ttsState.token += 1;
+  if (ttsState.audio) { ttsState.audio.pause(); ttsState.audio = null; }
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+}
+
+async function speakViaServer(text, lang) {
+  const res = await fetch(API.tts, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrf },
+    body: JSON.stringify({ text, lang }),
+  });
+  if (!res.ok) throw new Error(`tts ${res.status}`);
+  const url = URL.createObjectURL(await res.blob());
+  const audio = new Audio(url);
+  ttsState.audio = audio;
+  try {
+    await new Promise((resolve, reject) => {
+      audio.onended = resolve;
+      audio.onpause = resolve; // stopSpeaking() pauses: treat as end of segment
+      audio.onerror = () => reject(new Error('playback failed'));
+      audio.play().catch(reject);
+    });
+  } finally {
+    if (ttsState.audio === audio) ttsState.audio = null;
+    URL.revokeObjectURL(url);
+  }
+}
+
+function speakLocal(text, lang) {
   if (!('speechSynthesis' in window)) return;
-  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = lang;
+  const voice = speakVoice(lang);
+  if (voice) utter.voice = voice;
+  window.speechSynthesis.speak(utter);
+}
+
+async function speak(text) {
+  const segments = speakSegments(text.replace(/[*`]/g, ''));
+  if (!segments.length) return;
+  stopSpeaking();
+  const token = ttsState.token;
   const pref = { korean: 'ko', japanese: 'ja', chinese: 'zh' }[state.course && state.course.language] || 'ko';
   const fallbackLang = (el.micLang && el.micLang.value) || pref + '-' + pref.toUpperCase();
-  for (const seg of speakSegments(text.replace(/[*`]/g, ''))) {
+  // Prefer server-side Azure neural voices (the only way to get mn-MN);
+  // degrade to browser voices for the rest of this reply if it fails.
+  let useServer = Boolean(state.tts && state.tts.enabled);
+  for (const seg of segments) {
+    if (token !== ttsState.token) return;
     const lang = seg.lang || fallbackLang;
-    const utter = new SpeechSynthesisUtterance(seg.text);
-    utter.lang = lang;
-    const voice = speakVoice(lang);
-    if (voice) utter.voice = voice;
-    window.speechSynthesis.speak(utter);
+    if (useServer) {
+      try { await speakViaServer(seg.text, lang); continue; } catch (_) { useServer = false; }
+      if (token !== ttsState.token) return;
+    }
+    speakLocal(seg.text, lang);
   }
 }
 
