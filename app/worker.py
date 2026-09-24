@@ -37,7 +37,7 @@ def stop_process(process):
 def run():
     store.initialize()
     with (store.DATA / 'worker.lock').open('w') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        store.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         with store.connect() as db:
             db.execute("UPDATE jobs SET status='queued' WHERE status='processing'")
         stopping = False

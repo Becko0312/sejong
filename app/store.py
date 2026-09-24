@@ -12,20 +12,34 @@ COURSE_RETENTION = int(os.getenv('COURSE_RETENTION_DAYS', '3650')) * 86400
 SESSION_TTL = int(os.getenv('SESSION_TTL_DAYS', '30')) * 86400
 # Cap each self-signed-up student's tutor use per day to bound the AI bill.
 CLIENT_TUTOR_PER_DAY = int(os.getenv('CLIENT_TUTOR_PER_DAY', '60'))
+# WAL needs shared memory, which network filesystems (Azure Files/SMB) lack; the
+# cloud deployment sets SQLITE_JOURNAL=DELETE and tolerates flock() not working there.
+JOURNAL = os.getenv('SQLITE_JOURNAL', 'WAL').upper()
+BEST_EFFORT_LOCKS = os.getenv('SEJONG_BEST_EFFORT_LOCKS') == '1'
 
 
 def connect():
-    db = sqlite3.connect(DATA / 'jobs.sqlite3', timeout=30)
+    db = sqlite3.connect(DATA / 'jobs.sqlite3', timeout=60)
     db.row_factory = sqlite3.Row
+    db.execute('PRAGMA busy_timeout=60000')
     return db
+
+
+def flock(handle, flags):
+    """Advisory lock that degrades to a no-op on filesystems without flock support."""
+    try:
+        fcntl.flock(handle, flags)
+    except OSError:
+        if not BEST_EFFORT_LOCKS:
+            raise
 
 
 def initialize():
     DATA.mkdir(parents=True, exist_ok=True)
     with (DATA / 'initialize.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        flock(lock, fcntl.LOCK_EX)
         with connect() as db:
-            db.execute('PRAGMA journal_mode=WAL')
+            db.execute(f'PRAGMA journal_mode={JOURNAL}')
             db.execute('BEGIN IMMEDIATE')
             db.execute('CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, name TEXT, status TEXT, done INTEGER DEFAULT 0, total INTEGER DEFAULT 0, error TEXT, created REAL)')
             columns = {r['name'] for r in db.execute('PRAGMA table_info(jobs)')}

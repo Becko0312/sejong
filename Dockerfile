@@ -30,3 +30,13 @@ CMD ["python", "-m", "app.worker"]
 
 FROM worker AS cloud-worker
 CMD ["python", "-m", "app.cloud_job"]
+
+# Combined platform image: API + conversion worker in one container (Azure Container Apps).
+# Runs as root so the mounted Azure Files volume (/data) is writable regardless of its
+# SMB uid/gid; the conversion still runs in a resource-limited subprocess.
+FROM worker AS app
+USER root
+COPY deploy/start.sh /usr/local/bin/start.sh
+RUN chmod +x /usr/local/bin/start.sh
+EXPOSE 8000
+CMD ["/usr/local/bin/start.sh"]
