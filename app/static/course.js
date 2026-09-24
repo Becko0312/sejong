@@ -340,6 +340,27 @@ function stopSpeaking() {
   if ('speechSynthesis' in window) window.speechSynthesis.cancel();
 }
 
+function playAudio(audio) {
+  return new Promise((resolve, reject) => {
+    const settle = (fn, arg) => { audio.onended = audio.onpause = audio.onerror = null; fn(arg); };
+    audio.onended = () => settle(resolve);
+    audio.onpause = () => settle(resolve); // stopSpeaking() pauses: treat as end of segment
+    audio.onerror = () => settle(reject, new Error('playback failed'));
+    audio.play().catch((err) => {
+      if (err && err.name === 'NotAllowedError') {
+        // Autoplay blocked (common on phones): resume on the next tap instead
+        // of losing the speech, unless this segment was cancelled meanwhile.
+        document.addEventListener('pointerdown', () => {
+          if (ttsState.audio !== audio) { settle(resolve); return; }
+          audio.play().catch((e) => settle(reject, e));
+        }, { once: true });
+        return;
+      }
+      settle(reject, err);
+    });
+  });
+}
+
 async function speakViaServer(text, lang) {
   const res = await fetch(API.tts, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrf },
@@ -350,12 +371,7 @@ async function speakViaServer(text, lang) {
   const audio = new Audio(url);
   ttsState.audio = audio;
   try {
-    await new Promise((resolve, reject) => {
-      audio.onended = resolve;
-      audio.onpause = resolve; // stopSpeaking() pauses: treat as end of segment
-      audio.onerror = () => reject(new Error('playback failed'));
-      audio.play().catch(reject);
-    });
+    await playAudio(audio);
   } finally {
     if (ttsState.audio === audio) ttsState.audio = null;
     URL.revokeObjectURL(url);

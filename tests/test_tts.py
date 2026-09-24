@@ -92,6 +92,8 @@ def test_api_tts_returns_audio(admin, monkeypatch):
     assert res.status_code == 200, res.text
     assert res.headers['content-type'] == 'audio/mpeg'
     assert res.content == b'ID3fake-mp3'
+    # The reader plays this audio from a blob URL; the CSP must allow that.
+    assert "media-src 'self' blob:" in res.headers['content-security-policy']
 
 
 def test_api_tts_requires_sign_in(admin, monkeypatch):
