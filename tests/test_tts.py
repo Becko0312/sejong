@@ -94,10 +94,16 @@ def test_api_tts_returns_audio(admin, monkeypatch):
     assert res.content == b'ID3fake-mp3'
 
 
+def test_api_tts_requires_sign_in(admin, monkeypatch):
+    client, headers = admin
+    enable(monkeypatch)
+    client.cookies.clear()
+    assert client.post('/api/tts', json={'text': 'hi'}, headers=headers).status_code == 401
+
+
 def test_api_tts_guards(admin, client_user, monkeypatch):
     client, headers = client_user
     enable(monkeypatch)
-    assert client.post('/api/tts', json={'text': 'hi'}).status_code == 401
     assert client.post('/api/tts', json={'text': 'hi'}, headers={'x-csrf-token': 'wrong'}).status_code == 403
     assert client.post('/api/tts', json={'text': 'x' * (tts.MAX_TEXT + 1)}, headers=headers).status_code == 422
     admin_client, admin_headers = admin
