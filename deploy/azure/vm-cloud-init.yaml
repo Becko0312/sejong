@@ -1,0 +1,68 @@
+#cloud-config
+# Book2Course on an Azure VM with a data disk. Placeholders (__NAME__) are filled at
+# deploy time. Automatic HTTPS via Caddy using <public-ip>.sslip.io (no DNS setup);
+# swap the hostname for a real domain later. SQLite uses WAL on the ext4 data disk.
+write_files:
+  - path: /opt/book2course/docker-compose.yml
+    permissions: '0644'
+    content: |
+      services:
+        app:
+          image: __IMAGE__
+          restart: always
+          env_file: /opt/book2course/app.env
+          volumes:
+            - /mnt/data:/data
+          expose:
+            - "8000"
+        caddy:
+          image: caddy:2-alpine
+          restart: always
+          ports:
+            - "80:80"
+            - "443:443"
+          volumes:
+            - /opt/book2course/Caddyfile:/etc/caddy/Caddyfile:ro
+            - caddy_data:/data
+            - caddy_config:/config
+      volumes:
+        caddy_data: {}
+        caddy_config: {}
+runcmd:
+  - |
+    set -e
+    DISK=/dev/disk/azure/scsi1/lun0
+    if [ -e "$DISK" ]; then
+      blkid "$DISK" || mkfs.ext4 -F "$DISK"
+      mkdir -p /mnt/data
+      grep -q '/mnt/data' /etc/fstab || echo "$(readlink -f "$DISK") /mnt/data ext4 defaults,nofail 0 2" >> /etc/fstab
+      mount -a
+    else
+      mkdir -p /mnt/data
+    fi
+    curl -fsSL https://get.docker.com | sh
+    PUBIP=$(curl -s https://api.ipify.org)
+    HOST="${PUBIP}.sslip.io"
+    umask 077
+    cat > /opt/book2course/app.env <<EOF
+    ADMIN_USERNAME=__ADMINUSER__
+    ADMIN_PASSWORD=__ADMINPW__
+    TUTOR_PROVIDER=gemini
+    GEMINI_API_KEY=__GEMINI__
+    GEMINI_MODEL=gemini-2.5-flash
+    PUBLIC_ORIGIN=https://${HOST}
+    MAX_UPLOAD_MB=200
+    MAX_PAGES=500
+    MAX_OUTPUT_MB=1024
+    JOB_TIMEOUT_SECONDS=2400
+    CLIENT_TUTOR_PER_DAY=60
+    EOF
+    umask 022
+    cat > /opt/book2course/Caddyfile <<EOF
+    ${HOST} {
+      reverse_proxy app:8000
+    }
+    EOF
+    echo "__ACRPW__" | docker login __ACRSERVER__ -u __ACRUSER__ --password-stdin
+    cd /opt/book2course && docker compose up -d
+    echo "$HOST" > /opt/book2course/hostname.txt
