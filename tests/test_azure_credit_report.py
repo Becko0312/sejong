@@ -84,6 +84,17 @@ def test_summarize_zero_when_no_yesterday_row_and_no_budget():
     assert summary['budget_percent'] is None
 
 
+def test_env_or_falls_back_when_missing_or_blank(monkeypatch):
+    monkeypatch.delenv('X_TEST_SMTP', raising=False)
+    assert report._env_or('X_TEST_SMTP', 'smtp.gmail.com') == 'smtp.gmail.com'
+    monkeypatch.setenv('X_TEST_SMTP', '')
+    assert report._env_or('X_TEST_SMTP', 'smtp.gmail.com') == 'smtp.gmail.com'
+    monkeypatch.setenv('X_TEST_SMTP', '   ')
+    assert report._env_or('X_TEST_SMTP', 'smtp.gmail.com') == 'smtp.gmail.com'
+    monkeypatch.setenv('X_TEST_SMTP', 'custom.example.com')
+    assert report._env_or('X_TEST_SMTP', 'smtp.gmail.com') == 'custom.example.com'
+
+
 def test_render_body_includes_totals_and_budget():
     summary = report.summarize(
         [

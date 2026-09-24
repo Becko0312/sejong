@@ -217,6 +217,16 @@ def send_email(
         smtp.send_message(msg)
 
 
+def _env_or(name: str, default: str) -> str:
+    """Return the env var's trimmed value, or ``default`` when missing/blank.
+
+    ``os.environ.get(name, default)`` returns ``''`` (not the default) when
+    the variable is set to an empty string — as GitHub Actions does for an
+    unset ``vars.*`` reference. Fall back to ``default`` in that case too.
+    """
+    return os.environ.get(name, '').strip() or default
+
+
 def _required(name: str) -> str:
     value = os.environ.get(name, '').strip()
     if not value:
@@ -242,9 +252,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     client_secret = _required('AZURE_CLIENT_SECRET')
     recipient = _required('REPORT_EMAIL_TO')
     sender = _required('REPORT_EMAIL_FROM')
-    smtp_host = os.environ.get('REPORT_SMTP_HOST', 'smtp.gmail.com').strip()
-    smtp_port = int(os.environ.get('REPORT_SMTP_PORT', '587').strip() or '587')
-    smtp_username = os.environ.get('REPORT_SMTP_USERNAME', '').strip() or sender
+    smtp_host = _env_or('REPORT_SMTP_HOST', 'smtp.gmail.com')
+    smtp_port = int(_env_or('REPORT_SMTP_PORT', '587'))
+    smtp_username = _env_or('REPORT_SMTP_USERNAME', sender)
     budget = _optional_float('REPORT_BUDGET_AMOUNT')
     budget_currency = os.environ.get('REPORT_BUDGET_CURRENCY', '').strip() or None
     dry_run = os.environ.get('REPORT_DRY_RUN', '').strip() == '1'
