@@ -1,0 +1,32 @@
+name: Daily Azure credit report
+on:
+  schedule:
+    # 08:00 UTC every day — arrives before the working day in KST.
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Send daily spend email
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          REPORT_SCOPE: ${{ vars.REPORT_SCOPE }}
+          REPORT_EMAIL_TO: ${{ vars.REPORT_EMAIL_TO }}
+          REPORT_EMAIL_FROM: ${{ vars.REPORT_EMAIL_FROM }}
+          REPORT_SMTP_HOST: ${{ vars.REPORT_SMTP_HOST }}
+          REPORT_SMTP_PORT: ${{ vars.REPORT_SMTP_PORT }}
+          REPORT_SMTP_USERNAME: ${{ vars.REPORT_SMTP_USERNAME }}
+          REPORT_SMTP_PASSWORD: ${{ secrets.REPORT_SMTP_PASSWORD }}
+          REPORT_BUDGET_AMOUNT: ${{ vars.REPORT_BUDGET_AMOUNT }}
+          REPORT_BUDGET_CURRENCY: ${{ vars.REPORT_BUDGET_CURRENCY }}
+        run: python scripts/azure_credit_report.py
