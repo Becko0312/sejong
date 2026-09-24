@@ -288,15 +288,62 @@ function setupMic() {
   });
 }
 
+const SPEAK_SCRIPTS = [
+  { re: /[\u1100-\u11FF\u3130-\u318F\uAC00-\uD7A3\uA960-\uD7FF]/, lang: 'ko-KR' },
+  { re: /[\u0400-\u04FF]/, lang: 'mn-MN' },
+  { re: /[\u3040-\u30FF\u31F0-\u31FF]/, lang: 'ja-JP' },
+  { re: /[\u3400-\u4DBF\u4E00-\u9FFF]/, lang: 'zh-CN' },
+];
+const SPEAK_VOICE_FALLBACK = { 'mn-MN': ['ru'] };
+
+function speakScriptLang(ch) {
+  for (const s of SPEAK_SCRIPTS) if (s.re.test(ch)) return s.lang;
+  return null;
+}
+
+function speakSegments(text) {
+  const segments = [];
+  let lead = '';
+  for (const ch of text) {
+    const lang = speakScriptLang(ch);
+    if (!lang) {
+      if (segments.length) segments[segments.length - 1].text += ch;
+      else lead += ch;
+      continue;
+    }
+    if (!segments.length || segments[segments.length - 1].lang !== lang) segments.push({ lang, text: lead + ch });
+    else segments[segments.length - 1].text += ch;
+    lead = '';
+  }
+  if (!segments.length && lead.trim()) segments.push({ lang: null, text: lead });
+  return segments;
+}
+
+function speakVoice(lang) {
+  const voices = window.speechSynthesis.getVoices();
+  const norm = (lang || '').toLowerCase();
+  let voice = voices.find((v) => v.lang && v.lang.toLowerCase() === norm);
+  if (!voice && norm) voice = voices.find((v) => v.lang && v.lang.toLowerCase().startsWith(norm.split('-')[0]));
+  for (const fb of (!voice && SPEAK_VOICE_FALLBACK[lang]) || []) {
+    voice = voices.find((v) => v.lang && v.lang.toLowerCase().startsWith(fb));
+    if (voice) break;
+  }
+  return voice || null;
+}
+
 function speak(text) {
   if (!('speechSynthesis' in window)) return;
   window.speechSynthesis.cancel();
-  const utter = new SpeechSynthesisUtterance(text);
   const pref = { korean: 'ko', japanese: 'ja', chinese: 'zh' }[state.course && state.course.language] || 'ko';
-  utter.lang = pref + '-' + pref.toUpperCase();
-  const voice = window.speechSynthesis.getVoices().find((v) => v.lang && v.lang.startsWith(pref));
-  if (voice) utter.voice = voice;
-  window.speechSynthesis.speak(utter);
+  const fallbackLang = (el.micLang && el.micLang.value) || pref + '-' + pref.toUpperCase();
+  for (const seg of speakSegments(text.replace(/[*`]/g, ''))) {
+    const lang = seg.lang || fallbackLang;
+    const utter = new SpeechSynthesisUtterance(seg.text);
+    utter.lang = lang;
+    const voice = speakVoice(lang);
+    if (voice) utter.voice = voice;
+    window.speechSynthesis.speak(utter);
+  }
 }
 
 /* ---------- Navigation & layout ---------- */
