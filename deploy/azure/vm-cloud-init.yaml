@@ -64,5 +64,6 @@ runcmd:
     }
     EOF
     echo "__ACRPW__" | docker login __ACRSERVER__ -u __ACRUSER__ --password-stdin
-    cd /opt/book2course && docker compose up -d
+    cd /opt/book2course
+    for attempt in 1 2 3 4 5; do docker compose up -d && break || sleep 15; done
     echo "$HOST" > /opt/book2course/hostname.txt
