@@ -18,6 +18,7 @@ const el = {
   chat: document.getElementById('chat'), composer: document.getElementById('composer'),
   question: document.getElementById('question'), send: document.getElementById('send'),
   mic: document.getElementById('mic'), speak: document.getElementById('speak'),
+  stopSpeak: document.getElementById('stop-speak'),
   micLang: document.getElementById('mic-lang'), status: document.getElementById('tutor-status'),
   tutorPanel: document.getElementById('tutor'), tutorToggle: document.getElementById('tutor-toggle'),
   teachActions: document.getElementById('teach-actions'),
@@ -334,8 +335,13 @@ function speakVoice(lang) {
 
 const ttsState = { token: 0, audio: null };
 
+function setReading(on) {
+  if (el.stopSpeak) el.stopSpeak.disabled = !on;
+}
+
 function stopSpeaking() {
   ttsState.token += 1;
+  setReading(false);
   if (ttsState.audio) { ttsState.audio.pause(); ttsState.audio = null; }
   if ('speechSynthesis' in window) window.speechSynthesis.cancel();
 }
@@ -379,12 +385,13 @@ async function speakViaServer(text, lang) {
 }
 
 function speakLocal(text, lang) {
-  if (!('speechSynthesis' in window)) return;
+  if (!('speechSynthesis' in window)) return null;
   const utter = new SpeechSynthesisUtterance(text);
   utter.lang = lang;
   const voice = speakVoice(lang);
   if (voice) utter.voice = voice;
   window.speechSynthesis.speak(utter);
+  return utter;
 }
 
 async function speak(text) {
@@ -392,11 +399,13 @@ async function speak(text) {
   if (!segments.length) return;
   stopSpeaking();
   const token = ttsState.token;
+  setReading(true);
   const pref = { korean: 'ko', japanese: 'ja', chinese: 'zh' }[state.course && state.course.language] || 'ko';
   const fallbackLang = (el.micLang && el.micLang.value) || pref + '-' + pref.toUpperCase();
   // Prefer server-side Azure neural voices (the only way to get mn-MN);
   // degrade to browser voices for the rest of this reply if it fails.
   let useServer = Boolean(state.tts && state.tts.enabled);
+  let lastUtter = null;
   for (const seg of segments) {
     if (token !== ttsState.token) return;
     const lang = seg.lang || fallbackLang;
@@ -404,9 +413,21 @@ async function speak(text) {
       try { await speakViaServer(seg.text, lang); continue; } catch (_) { useServer = false; }
       if (token !== ttsState.token) return;
     }
-    speakLocal(seg.text, lang);
+    lastUtter = speakLocal(seg.text, lang) || lastUtter;
+  }
+  if (token !== ttsState.token) return;
+  if (lastUtter) {
+    // Browser voices run asynchronously; keep Stop armed until the last one ends.
+    const finish = () => { if (token === ttsState.token) setReading(false); };
+    lastUtter.addEventListener('end', finish);
+    lastUtter.addEventListener('error', finish);
+  } else {
+    setReading(false);
   }
 }
+
+el.stopSpeak.addEventListener('click', stopSpeaking);
+el.speak.addEventListener('change', () => { if (!el.speak.checked) stopSpeaking(); });
 
 /* ---------- Navigation & layout ---------- */
 el.homeBtn.addEventListener('click', showHome);

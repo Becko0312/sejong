@@ -56,7 +56,10 @@
         <button type="submit" id="send" class="send" aria-label="Send">➤</button>
       </div>
       <div class="composer-opts">
-        <label><input type="checkbox" id="speak"> Read answers aloud</label>
+        <span class="speak-opts">
+          <label><input type="checkbox" id="speak"> Read answers aloud</label>
+          <button type="button" id="stop-speak" class="stop-speak" title="Stop reading aloud" aria-label="Stop reading aloud" disabled>⏹ Stop</button>
+        </span>
         <select id="mic-lang" aria-label="Speech language" title="Speech recognition language">
           <option value="ko-KR">Speak: Korean</option>
           <option value="en-US">Speak: English</option>

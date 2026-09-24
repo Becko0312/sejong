@@ -59,6 +59,10 @@ button:disabled{opacity:.5;cursor:default}
 .composer-opts{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:9px;font-size:11px;color:#6f7d6c}
 .composer-opts input{accent-color:#315541}
 .composer-opts select{border:1px solid #d3ddcc;border-radius:6px;padding:4px 6px;font-size:11px;color:#3a5a47;background:white}
+.speak-opts{display:flex;align-items:center;gap:8px}
+.stop-speak{border:1px solid #d6e2cf;background:#eef4ea;color:#2c503f;border-radius:20px;padding:4px 10px;font-size:11px;cursor:pointer}
+.stop-speak:hover:not(:disabled){background:#e0ebda}
+.stop-speak:disabled{opacity:.4;cursor:default}
 .composer[hidden]+*,.tutor[hidden]{display:none}
 
 /* Collapsed tutor */
