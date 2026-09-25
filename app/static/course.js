@@ -2,8 +2,8 @@
 // Book2Course reader: renders a converted book as a lesson-structured course + AI tutor.
 const app = document.getElementById('app');
 const jobId = decodeURIComponent(location.pathname.replace(/^\/course\//, '').replace(/\/$/, ''));
-const API = { course: `/api/courses/${jobId}`, image: (n) => `/books/${jobId}/page-${n}.png`, tutor: `/api/tutor/${jobId}`, tts: '/api/tts' };
-const state = { csrf: '', tutor: { enabled: false }, tts: { enabled: false }, course: null, pages: [], lessons: [], title: '', current: 0, history: [], busy: false, taught: new Set() };
+const API = { course: `/api/courses/${jobId}`, image: (n) => `/books/${jobId}/page-${n}.png`, tutor: `/api/tutor/${jobId}`, tts: '/api/tts', interactive: (n) => `/api/courses/${jobId}/pages/${n}/interactive` };
+const state = { csrf: '', role: '', tutor: { enabled: false }, tts: { enabled: false }, enrich: { enabled: false }, view: 'scan', viewLoad: 0, course: null, pages: [], lessons: [], title: '', current: 0, history: [], busy: false, taught: new Set() };
 const MODE_LABELS = { intro: 'Start teaching this page', explain: '📖 Explain this page', vocab: '🔤 Teach the vocabulary', quiz: '✍️ Quiz me on this page', practice: '🗣️ Practice speaking' };
 
 const el = {
@@ -11,6 +11,9 @@ const el = {
   courseHome: document.getElementById('course-home'), tocList: document.getElementById('toc-list'),
   pageLabel: document.getElementById('page-label'), lessonLabel: document.getElementById('lesson-label'),
   image: document.getElementById('page-image'), text: document.getElementById('page-text'),
+  frame: document.getElementById('page-frame'), textBox: document.getElementById('page-text-box'),
+  interactive: document.getElementById('interactive'), viewSwitch: document.getElementById('view-switch'),
+  viewScan: document.getElementById('view-scan'), viewInteractive: document.getElementById('view-interactive'),
   flag: document.getElementById('page-flag'), prev: document.getElementById('prev'), next: document.getElementById('next'),
   homeBtn: document.getElementById('home-btn'), home: document.getElementById('home'), stage: document.getElementById('stage'),
   homeTitle: document.getElementById('home-title'), homeMeta: document.getElementById('home-meta'),
@@ -41,6 +44,10 @@ async function boot() {
     state.title = course.title || 'Course';
     state.tutor = course.tutor || session.tutor || { enabled: false };
     state.tts = course.tts || { enabled: false };
+    state.enrich = course.enrich || { enabled: false };
+    state.role = account.role;
+    // The switch appears once interactive pages exist, or for admins who can build them.
+    el.viewSwitch.hidden = !(state.enrich.enabled && ((state.enrich.built || 0) > 0 || account.role === 'admin'));
     if (!state.pages.length) throw new Error('This course has no pages.');
     el.title.textContent = state.title;
     const langBit = course.language ? `${LANG[course.language] || course.language} · ` : '';
@@ -175,6 +182,7 @@ function show(number) {
   el.stage.scrollTop = 0;
   if (state.tutor.enabled) el.teachActions.hidden = false;
   maybeTeachLesson(page);
+  applyView();
 }
 
 /* ---------- Tutor ---------- */
@@ -436,6 +444,81 @@ async function speak(text) {
 
 el.stopSpeak.addEventListener('click', stopSpeaking);
 el.speak.addEventListener('change', () => { if (!el.speak.checked) stopSpeaking(); });
+
+/* ---------- Interactive page view ---------- */
+function applyView() {
+  const interactive = state.view === 'interactive' && state.enrich.enabled;
+  el.viewScan.classList.toggle('current', !interactive);
+  el.viewInteractive.classList.toggle('current', interactive);
+  el.frame.hidden = interactive;
+  el.textBox.hidden = interactive;
+  el.interactive.hidden = !interactive;
+  if (interactive && state.current) loadInteractive(state.current);
+}
+
+el.viewScan.addEventListener('click', () => { state.view = 'scan'; applyView(); });
+el.viewInteractive.addEventListener('click', () => { state.view = 'interactive'; applyView(); });
+
+async function loadInteractive(number) {
+  const token = ++state.viewLoad;
+  el.interactive.innerHTML = '';
+  el.interactive.appendChild(ixNote('Reorganizing this page with AI…'));
+  try {
+    const res = await fetch(API.interactive(number));
+    const data = await res.json().catch(() => ({}));
+    if (token !== state.viewLoad || state.view !== 'interactive' || state.current !== number) return;
+    el.interactive.innerHTML = '';
+    if (!res.ok) throw new Error(data.detail || 'Could not build the interactive page.');
+    const sentences = data.sentences || [];
+    if (!sentences.length) { el.interactive.appendChild(ixNote('No Korean sentences were detected on this page.')); return; }
+    for (const s of sentences) el.interactive.appendChild(sentenceBlock(s));
+  } catch (err) {
+    if (token !== state.viewLoad) return;
+    el.interactive.innerHTML = '';
+    el.interactive.appendChild(ixNote(err.message || 'Could not load the interactive page.'));
+  }
+}
+
+function ixNote(text) {
+  const p = document.createElement('p');
+  p.className = 'ix-note';
+  p.textContent = text;
+  return p;
+}
+
+function sentenceBlock(s) {
+  const wrap = document.createElement('div');
+  wrap.className = 'sentence';
+  const line = document.createElement('div');
+  line.className = 'sentence-ko';
+  const ko = document.createElement('span');
+  ko.textContent = s.ko;
+  line.appendChild(ko);
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'speak-btn';
+  btn.title = 'Listen to this sentence';
+  btn.setAttribute('aria-label', 'Listen to this sentence');
+  btn.textContent = '🔊';
+  btn.addEventListener('click', () => speakSentence(s.ko));
+  line.appendChild(btn);
+  wrap.appendChild(line);
+  if (s.rom) { const rom = document.createElement('div'); rom.className = 'sentence-rom'; rom.textContent = s.rom; wrap.appendChild(rom); }
+  if (s.tr) { const tr = document.createElement('div'); tr.className = 'sentence-tr'; tr.textContent = s.tr; wrap.appendChild(tr); }
+  return wrap;
+}
+
+async function speakSentence(text) {
+  stopSpeaking();
+  const token = ttsState.token;
+  setReading(true);
+  try {
+    await speakViaServer(text, 'ko-KR');
+  } catch (_) {
+    if (token === ttsState.token) speakLocal(text, 'ko-KR');
+  }
+  if (token === ttsState.token) setReading(false);
+}
 
 /* ---------- Navigation & layout ---------- */
 el.homeBtn.addEventListener('click', showHome);

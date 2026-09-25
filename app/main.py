@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from app import auth, builder, store, tts, tutor
+from app import auth, builder, enrich, store, tts, tutor
 
 PUBLIC_ORIGIN = os.getenv('PUBLIC_ORIGIN', '').rstrip('/')
 STATIC = Path(__file__).parent / 'static'
@@ -181,6 +181,16 @@ def admin_courses(request: Request):
         item = catalog_item(job)
         item.update(done=job.get('done'), total=job.get('total'), error=job.get('error'),
                     attempts=job.get('attempts'), ocr=job.get('ocr'))
+        if job.get('status') == 'completed':
+            data_dir = store.DATA / job['id']
+            try:
+                manifest = read_manifest(job['id'])
+            except HTTPException:
+                manifest = None
+            if manifest:
+                item['enrich'] = {**enrich.estimate(manifest), 'enabled': enrich.enabled(),
+                                  'built': enrich.built_count(data_dir),
+                                  'status': enrich.read_status(data_dir)}
         items.append(item)
     return items
 
@@ -327,6 +337,7 @@ def course_structure(job_id: str, request: Request):
     course['target_lang'] = job.get('target_lang')
     course['tutor'] = tutor.config()
     course['tts'] = tts.config()
+    course['enrich'] = {**enrich.config(), 'built': enrich.built_count(store.DATA / job_id)}
     return course
 
 
@@ -339,6 +350,47 @@ def asset(job_id: str, filename: str, request: Request):
     if not path.is_file():
         raise HTTPException(404, 'Page not found.')
     return FileResponse(path, headers={'Content-Security-Policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'self'; sandbox allow-same-origin"})
+
+
+@app.get('/api/courses/{job_id}/pages/{number}/interactive')
+def interactive_page(job_id: str, number: int, request: Request):
+    # AI-reorganized study view of one page; generated once, then served from disk.
+    user = current(request)
+    viewable(job_id, user)
+    manifest = read_manifest(job_id)
+    page = tutor.locate_page(manifest, number)
+    if page is None:
+        raise HTTPException(404, 'That page is not part of this course.')
+    if not (page.get('text') or '').strip():
+        raise HTTPException(409, 'This page has no extracted text to reorganize.')
+    if not enrich.output_path(store.DATA / job_id, number).is_file() and user['role'] != 'admin':
+        raise HTTPException(409, 'The interactive pages for this course have not been built yet. An administrator can build them from the Courses page.')
+    try:
+        return enrich.load_or_generate(store.DATA / job_id, page)
+    except enrich.EnrichError as exc:
+        raise HTTPException(503, exc.message)
+
+
+@app.get('/api/admin/courses/{job_id}/enrich')
+def enrich_info(job_id: str, request: Request):
+    require_admin(request, csrf=False)
+    admin_job(job_id)
+    manifest = read_manifest(job_id)
+    data_dir = store.DATA / job_id
+    return {**enrich.estimate(manifest), 'enabled': enrich.enabled(),
+            'built': enrich.built_count(data_dir), 'status': enrich.read_status(data_dir)}
+
+
+@app.post('/api/admin/courses/{job_id}/enrich')
+def enrich_build(job_id: str, request: Request):
+    require_admin(request)
+    admin_job(job_id)
+    if not enrich.enabled():
+        raise HTTPException(503, 'Interactive pages are not configured on this server yet.')
+    manifest = read_manifest(job_id)
+    if not enrich.start_batch(store.DATA / job_id, manifest):
+        raise HTTPException(409, 'Interactive pages are already being built.')
+    return enrich.read_status(store.DATA / job_id)
 
 
 class TutorRequest(BaseModel):
