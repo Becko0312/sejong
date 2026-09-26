@@ -128,7 +128,7 @@ button:disabled{opacity:.5;cursor:default}
 .live-btn{background:#264f3e;color:#fff;border-radius:20px;padding:8px 14px;font-size:12px;font-weight:600}
 .live-btn:hover{background:#31624c}
 .live-btn.active{background:#b8432f}
-.voice-overlay{position:fixed;inset:0;z-index:50;background:rgba(28,42,34,.82);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center}
+.voice-overlay{position:fixed;inset:0;z-index:50;background:linear-gradient(160deg,#1b2a22,#132019);display:flex;align-items:center;justify-content:center}
 .voice-inner{display:flex;flex-direction:column;align-items:center;gap:22px;padding:32px;max-width:520px;width:90%;text-align:center}
 .orb{width:150px;height:150px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#8fd6ac,#3f8f65 60%,#2c6a4c);box-shadow:0 0 0 0 rgba(143,214,172,.5);display:grid;place-items:center;transition:transform .2s}
 .orb-icon{font-size:52px;filter:saturate(0) brightness(3)}
@@ -137,7 +137,8 @@ button:disabled{opacity:.5;cursor:default}
 @keyframes orb-listen{0%,100%{box-shadow:0 0 0 0 rgba(143,214,172,.45)}50%{box-shadow:0 0 0 26px rgba(143,214,172,0)}}
 @keyframes orb-speak{0%,100%{transform:scale(1)}50%{transform:scale(1.09)}}
 .voice-status{color:#eaf4ec;font-size:15px;font-weight:600;margin:0;letter-spacing:.3px}
-.voice-transcript{width:100%;max-height:34vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px;font-size:13px}
+.voice-transcript{width:100%;max-height:38vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px;font-size:13px;background:rgba(9,16,12,.5);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:12px}
+.voice-transcript:empty{display:none}
 .voice-transcript .vt{padding:9px 13px;border-radius:12px;line-height:1.5;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere}
 .voice-transcript .vt.you{align-self:flex-end;background:#3a6d52;color:#eef6f0;border-bottom-right-radius:3px;max-width:85%}
 .voice-transcript .vt.tutor{align-self:flex-start;background:#f3f6f0;color:#25382e;border-bottom-left-radius:3px;max-width:88%}
