@@ -42,3 +42,14 @@ RUN_AZURE_EMULATOR_TESTS=1 .venv/bin/python -m pytest -q
 Azurite is bound to localhost with a deliberately non-secret development key. Production disables shared-key storage authentication. Browser sessions are anonymous and private; clearing cookies loses access. No account recovery or billing integration is implemented.
 
 The older VM deployment remains under `legacy-vm/` for reference and is not the selected deployment.
+
+## Daily credit-usage email
+
+`scripts/azure_credit_report.py` queries `Microsoft.CostManagement/query` for month-to-date and daily cost, then emails a short summary. The GitHub Actions workflow `.github/workflows/azure-credit-report.yml` runs it once a day (08:00 UTC) and on manual dispatch, so the private recipient sees each day's Azure spend without opening the portal.
+
+Set these in the repository's GitHub settings, then run the workflow once from the Actions tab to confirm delivery:
+
+- **Secrets**: `AZURE_SUBSCRIPTION_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` (service principal with **Cost Management Reader** on the subscription or resource group), `REPORT_SMTP_PASSWORD` (Gmail App Password for the sender account).
+- **Variables**: `REPORT_EMAIL_TO=becko0312@gmail.com`, `REPORT_EMAIL_FROM=<gmail address>`, optionally `REPORT_SMTP_USERNAME`, `REPORT_SMTP_HOST` (defaults to `smtp.gmail.com`), `REPORT_SMTP_PORT` (defaults to `587`), `REPORT_SCOPE` (subscription by default; set to `/subscriptions/<id>/resourceGroups/sejong-converter-rg` to scope to this deployment), `REPORT_BUDGET_AMOUNT` (e.g. `33000` to match the KRW alert budget), `REPORT_BUDGET_CURRENCY` (e.g. `KRW`).
+
+Locally, populate the same names in `.env`, then `REPORT_DRY_RUN=1 python scripts/azure_credit_report.py` prints the exact message without contacting SMTP.

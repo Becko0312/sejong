@@ -3,6 +3,8 @@
 const $ = (s) => document.querySelector(s);
 const escape = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let me = null, authMode = 'login', pollTimer = null, chosenFile = null;
+const enrichEst = {};
+const fmtK = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
 async function api(url, options = {}) {
   const res = await fetch(url, options);
@@ -118,7 +120,8 @@ async function loadAdmin() {
   try {
     const courses = await api('/api/admin/courses');
     clearTimeout(pollTimer);
-    if (courses.some((c) => ['uploading', 'queued', 'processing'].includes(c.status))) pollTimer = setTimeout(loadAdmin, 5000);
+    if (courses.some((c) => ['uploading', 'queued', 'processing'].includes(c.status)
+        || (c.enrich && c.enrich.status && c.enrich.status.state === 'building'))) pollTimer = setTimeout(loadAdmin, 5000);
     $('#course-count').textContent = courses.length;
     list.innerHTML = courses.length ? courses.map(adminRow).join('') : '<div class="empty">No courses yet. Add one on the left.</div>';
   } catch (err) { list.innerHTML = `<div class="empty">${escape(err.message)}</div>`; }
@@ -127,14 +130,29 @@ async function loadAdmin() {
 function adminRow(c) {
   const langs = [c.source_lang, c.target_lang].filter(Boolean).join(' → ');
   const done = c.status === 'completed';
+  if (c.enrich) enrichEst[c.id] = c.enrich;
   const actions = [];
   if (done) actions.push(`<a class="open" href="/course/${encodeURIComponent(c.id)}">Open ↗</a>`);
   if (done) actions.push(`<button class="ghost" data-toggle="${c.id}" data-available="${c.available ? 1 : 0}">${c.available ? 'Hide from students' : 'Publish to students'}</button>`);
   if (c.status === 'failed' && (c.attempts || 0) < 3) actions.push(`<button class="ghost" data-retry="${c.id}">Retry</button>`);
   actions.push(`<button class="danger" data-delete="${c.id}">Delete</button>`);
   const meta = done ? `${langs ? escape(langs) + ' · ' : ''}${c.available ? 'Visible to students' : 'Hidden'}` : `${langs ? escape(langs) + ' · ' : ''}${c.done || 0}/${c.total || '…'} pages`;
+  let ix = '';
+  if (done && c.enrich) {
+    const e = c.enrich;
+    if (!e.enabled) {
+      ix = '<p class="meta">✨ Interactive pages: no AI key configured on this server.</p>';
+    } else {
+      const st = e.status || {};
+      const prog = st.state === 'building' ? ` · building ${st.done || 0}/${st.total || e.pages}…`
+        : (st.state && st.state !== 'idle' && st.state !== 'done' ? ` · ${st.state}${st.error ? `: ${st.error}` : ''}` : '');
+      ix = `<p class="meta">✨ Interactive: ${e.built}/${e.pages} pages built · estimate ≈${fmtK(e.input_tokens)} in + ${fmtK(e.output_tokens)} out tokens on ${escape(e.model)} (≈ $${e.cost_usd.toFixed(2)})${prog}</p>`
+        + `<div class="row-actions"><button class="ghost" data-enrich="${c.id}">${e.built ? 'Rebuild' : 'Build'} interactive pages</button></div>`;
+    }
+  }
   return `<div class="course-row"><div class="top"><h3>${escape(c.title)}</h3><span class="status ${escape(c.status)}">${escape(c.status)}</span></div>`
     + `<p class="meta">${meta}${c.error ? ` · <span style="color:#a5462f">${escape(c.error)}</span>` : ''}</p>`
+    + ix
     + (['uploading', 'queued', 'processing'].includes(c.status) ? `<progress value="${c.done || 0}" max="${c.total || 1}"></progress>` : '')
     + `<div class="row-actions">${actions.join('')}</div></div>`;
 }
@@ -145,6 +163,12 @@ $('#admin-list').addEventListener('click', async (e) => {
   try {
     if (d.toggle) await api(`/api/jobs/${d.toggle}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': me.csrf }, body: JSON.stringify({ available: d.available !== '1' }) });
     else if (d.retry) await api(`/api/jobs/${d.retry}/retry`, { method: 'POST', headers: { 'X-CSRF-Token': me.csrf } });
+    else if (d.enrich) {
+      const e = enrichEst[d.enrich];
+      const msg = e ? `Build interactive pages for all ${e.pages} text pages?\nEstimated ${e.input_tokens.toLocaleString()} input + ${e.output_tokens.toLocaleString()} output tokens on ${e.model} (about $${e.cost_usd.toFixed(2)}).` : 'Build interactive pages?';
+      if (!confirm(msg)) return;
+      await api(`/api/admin/courses/${d.enrich}/enrich`, { method: 'POST', headers: { 'X-CSRF-Token': me.csrf } });
+    }
     else if (d.delete) { if (!confirm('Delete this course? This cannot be undone.')) return; await api(`/api/jobs/${d.delete}`, { method: 'DELETE', headers: { 'X-CSRF-Token': me.csrf } }); }
     else return;
     await loadAdmin();

@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        target: [api, cloud-worker]
+        target: [api, cloud-worker, app]
     steps:
       - uses: actions/checkout@v4
       - name: Authenticate to GHCR
