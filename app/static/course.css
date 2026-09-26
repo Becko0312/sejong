@@ -145,3 +145,12 @@ button:disabled{opacity:.5;cursor:default}
 .voice-hint{color:#b9cdbf;font-size:11px;margin:0;max-width:340px}
 .voice-end{background:#fff;color:#7a2e1e;border-radius:22px;padding:11px 20px;font-size:13px;font-weight:600}
 .voice-end:hover{background:#ffe9e3}
+
+/* Split-screen live voice: book on the right, voice UI on the left */
+@media(min-width:820px){
+  #app.live-active{grid-template-columns:1fr 1fr}
+  #app.live-active .toc,
+  #app.live-active .tutor{display:none}
+  #app.live-active .voice-overlay{position:static;inset:auto;z-index:auto;order:-1;height:100vh}
+  #app.live-active .voice-inner{max-height:100vh;overflow-y:auto}
+}

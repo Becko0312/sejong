@@ -555,6 +555,7 @@ async function startLive() {
   if (live.active || !state.tutor.enabled) return;
   live.active = true; live.lastRole = null;
   el.voice.hidden = false; el.voiceTranscript.innerHTML = ''; vStatus('Connecting…');
+  document.getElementById('app').classList.add('live-active');
   el.liveBtn.classList.add('active');
   try {
     live.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
@@ -596,6 +597,7 @@ async function startLive() {
 function stopLive() {
   live.active = false;
   el.voice.hidden = true;
+  document.getElementById('app').classList.remove('live-active');
   el.liveBtn.classList.remove('active');
   try { live.ws && live.ws.close(); } catch (_) {}
   try { live.stream && live.stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
