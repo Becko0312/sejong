@@ -17,10 +17,13 @@ const el = {
   homeEyebrow: document.getElementById('home-eyebrow'), lessonGrid: document.getElementById('lesson-grid'),
   chat: document.getElementById('chat'), composer: document.getElementById('composer'),
   question: document.getElementById('question'), send: document.getElementById('send'),
-  mic: document.getElementById('mic'), speak: document.getElementById('speak'),
+  mic: document.getElementById('mic'),
   micLang: document.getElementById('mic-lang'), status: document.getElementById('tutor-status'),
   tutorPanel: document.getElementById('tutor'), tutorToggle: document.getElementById('tutor-toggle'),
   teachActions: document.getElementById('teach-actions'),
+  liveBtn: document.getElementById('live-btn'), voice: document.getElementById('voice'),
+  orb: document.getElementById('orb'), voiceStatus: document.getElementById('voice-status'),
+  voiceTranscript: document.getElementById('voice-transcript'), voiceEnd: document.getElementById('voice-end'),
 };
 const LANG = { korean: 'Korean', japanese: 'Japanese', chinese: 'Chinese', english: 'English' };
 
@@ -187,6 +190,8 @@ function setupTutor() {
     addNote('The AI tutor is not switched on for this server. You can still read every page of the course.');
     el.question.disabled = el.send.disabled = el.mic.disabled = true;
   }
+  // Live voice needs the Gemini provider (bidirectional audio); hide it otherwise.
+  if (!(state.tutor.enabled && state.tutor.provider === 'gemini')) el.liveBtn.hidden = true;
   setupMic();
 }
 
@@ -209,7 +214,6 @@ async function runTutor({ question = '', mode = null, label }) {
     if (!res.ok) { addErr(data.detail || 'The tutor could not respond. Please try again.'); return; }
     addBot(data.reply);
     state.history.push({ role: 'user', content: label || question }, { role: 'assistant', content: data.reply });
-    if (el.speak.checked) speak(data.reply);
   } catch (err) {
     typing.remove();
     addErr('Network error reaching the tutor. Please try again.');
@@ -288,16 +292,74 @@ function setupMic() {
   });
 }
 
-function speak(text) {
-  if (!('speechSynthesis' in window)) return;
-  window.speechSynthesis.cancel();
-  const utter = new SpeechSynthesisUtterance(text);
-  const pref = { korean: 'ko', japanese: 'ja', chinese: 'zh' }[state.course && state.course.language] || 'ko';
-  utter.lang = pref + '-' + pref.toUpperCase();
-  const voice = window.speechSynthesis.getVoices().find((v) => v.lang && v.lang.startsWith(pref));
-  if (voice) utter.voice = voice;
-  window.speechSynthesis.speak(utter);
+/* ---------- Live voice mode (Gemini Live via server proxy) ---------- */
+const b64ToInt16 = (b64) => { const bin = atob(b64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); return new Int16Array(bytes.buffer); };
+const int16ToB64 = (buf) => { const bytes = new Uint8Array(buf); let s = ''; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return btoa(s); };
+
+const live = { active: false, ws: null, capCtx: null, playCtx: null, stream: null, playNode: null, lastRole: null };
+
+function vStatus(text, cls) { el.voiceStatus.textContent = text; el.voice.className = 'voice-overlay' + (cls ? ' ' + cls : ''); }
+function vLine(role, text) {
+  if (role === live.lastRole && el.voiceTranscript.lastChild) { el.voiceTranscript.lastChild.textContent += text; }
+  else { const d = document.createElement('div'); d.className = 'vt ' + (role === 'you' ? 'you' : 'tutor'); d.textContent = text; el.voiceTranscript.appendChild(d); live.lastRole = role; }
+  el.voiceTranscript.scrollTop = el.voiceTranscript.scrollHeight;
 }
+
+async function startLive() {
+  if (live.active || !state.tutor.enabled) return;
+  live.active = true; live.lastRole = null;
+  el.voice.hidden = false; el.voiceTranscript.innerHTML = ''; vStatus('Connecting…');
+  el.liveBtn.classList.add('active');
+  try {
+    live.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+    live.playCtx = new AudioContext({ sampleRate: 24000 });
+    await live.playCtx.audioWorklet.addModule('/static/live-playback.worklet.js');
+    live.playNode = new AudioWorkletNode(live.playCtx, 'playback');
+    live.playNode.connect(live.playCtx.destination);
+    live.playNode.port.onmessage = (e) => { if (live.active) vStatus(e.data === 'speaking' ? 'Tutor is speaking…' : 'Listening — go ahead', e.data === 'speaking' ? 'speaking' : 'listening'); };
+
+    live.capCtx = new AudioContext({ sampleRate: 16000 });
+    await live.capCtx.audioWorklet.addModule('/static/live-capture.worklet.js');
+    const src = live.capCtx.createMediaStreamSource(live.stream);
+    const capNode = new AudioWorkletNode(live.capCtx, 'capture');
+    capNode.port.onmessage = (e) => { if (live.ws && live.ws.readyState === 1) live.ws.send(JSON.stringify({ type: 'audio', data: int16ToB64(e.data) })); };
+    src.connect(capNode);
+
+    const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+    live.ws = new WebSocket(`${scheme}://${location.host}/api/live/${jobId}`);
+    live.ws.onopen = () => live.ws.send(JSON.stringify({ type: 'start', page: state.current || 1 }));
+    live.ws.onmessage = (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.type === 'ready') vStatus('Listening — go ahead', 'listening');
+      else if (m.type === 'audio') { const pcm = b64ToInt16(m.data); const f = new Float32Array(pcm.length); for (let i = 0; i < pcm.length; i++) f[i] = pcm[i] / 32768; live.playNode.port.postMessage(f); }
+      else if (m.type === 'interrupted') live.playNode.port.postMessage('clear');
+      else if (m.type === 'user_text') vLine('you', m.text);
+      else if (m.type === 'tutor_text') vLine('tutor', m.text);
+      else if (m.type === 'turn_end') live.lastRole = null;
+      else if (m.type === 'error') { vStatus(m.detail || 'The tutor is unavailable.'); setTimeout(stopLive, 2500); }
+      else if (m.type === 'end') stopLive();
+    };
+    live.ws.onerror = () => vStatus('Connection error.');
+    live.ws.onclose = () => { if (live.active) stopLive(); };
+  } catch (err) {
+    vStatus(err && err.name === 'NotAllowedError' ? 'Microphone permission is needed for voice mode.' : 'Could not start voice mode.');
+    setTimeout(stopLive, 2500);
+  }
+}
+
+function stopLive() {
+  live.active = false;
+  el.voice.hidden = true;
+  el.liveBtn.classList.remove('active');
+  try { live.ws && live.ws.close(); } catch (_) {}
+  try { live.stream && live.stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+  try { live.capCtx && live.capCtx.close(); } catch (_) {}
+  try { live.playCtx && live.playCtx.close(); } catch (_) {}
+  live.ws = live.stream = live.capCtx = live.playCtx = live.playNode = null;
+}
+
+el.liveBtn.addEventListener('click', () => { if (live.active) stopLive(); else startLive(); });
+el.voiceEnd.addEventListener('click', stopLive);
 
 /* ---------- Navigation & layout ---------- */
 el.homeBtn.addEventListener('click', showHome);

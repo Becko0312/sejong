@@ -56,16 +56,26 @@
         <button type="submit" id="send" class="send" aria-label="Send">➤</button>
       </div>
       <div class="composer-opts">
-        <label><input type="checkbox" id="speak"> Read answers aloud</label>
-        <select id="mic-lang" aria-label="Speech language" title="Speech recognition language">
-          <option value="ko-KR">Speak: Korean</option>
-          <option value="en-US">Speak: English</option>
-          <option value="mn-MN">Speak: Mongolian</option>
-          <option value="ja-JP">Speak: Japanese</option>
+        <button type="button" id="live-btn" class="live-btn">🎙️ Talk with tutor — Live voice</button>
+        <select id="mic-lang" aria-label="Dictation language" title="Voice-to-text language for the 🎤 button">
+          <option value="ko-KR">Dictate: Korean</option>
+          <option value="en-US">Dictate: English</option>
+          <option value="mn-MN">Dictate: Mongolian</option>
+          <option value="ja-JP">Dictate: Japanese</option>
         </select>
       </div>
     </form>
   </section>
+
+  <div class="voice-overlay" id="voice" hidden>
+    <div class="voice-inner">
+      <div class="orb" id="orb"><span class="orb-icon">🎙️</span></div>
+      <p class="voice-status" id="voice-status">Connecting…</p>
+      <div class="voice-transcript" id="voice-transcript" aria-live="polite"></div>
+      <p class="voice-hint">Just speak — the tutor listens and replies out loud. You can interrupt any time.</p>
+      <button class="voice-end" id="voice-end">✕ End conversation</button>
+    </div>
+  </div>
 </div>
 <script src="/static/course.js"></script>
 </body></html>

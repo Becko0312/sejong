@@ -9,11 +9,11 @@ import re
 import shutil
 import time
 import uuid
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from app import auth, builder, store, tutor
+from app import auth, builder, live, store, tutor
 
 PUBLIC_ORIGIN = os.getenv('PUBLIC_ORIGIN', '').rstrip('/')
 STATIC = Path(__file__).parent / 'static'
@@ -368,3 +368,57 @@ def ask_tutor(job_id: str, body: TutorRequest, request: Request):
         return tutor.answer(body.question, job.get('title') or manifest.get('title', 'this textbook'), page, body.history, body.mode)
     except tutor.TutorError as exc:
         raise HTTPException(503, exc.message)
+
+
+@app.websocket('/api/live/{job_id}')
+async def live_ws(ws: WebSocket, job_id: str):
+    user = auth.session(ws)
+    if not user:
+        await ws.close(code=4401)
+        return
+    if not (tutor.provider() == 'gemini' and tutor.enabled()):
+        await ws.close(code=4400)
+        return
+    try:
+        job = viewable(job_id, user)
+    except HTTPException:
+        await ws.close(code=4404)
+        return
+    await ws.accept()
+    try:
+        start = await asyncio.wait_for(ws.receive_json(), timeout=10)
+    except (asyncio.TimeoutError, WebSocketDisconnect, Exception):
+        return
+    page = tutor.locate_page(read_manifest(job_id), int(start.get('page', 1) or 1))
+    if page is None:
+        await ws.send_json({'type': 'error', 'detail': 'That page is not part of this course.'})
+        return
+    if user['role'] != 'admin':
+        now = time.time()
+        with store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            used = db.execute('SELECT count(*) FROM usage WHERE subject=? AND created>?', (user['username'], now - 86400)).fetchone()[0]
+            if used >= store.CLIENT_TUTOR_PER_DAY:
+                await ws.send_json({'type': 'error', 'detail': 'You have reached today\'s tutor limit.'})
+                return
+            db.execute('INSERT INTO usage(subject, created) VALUES(?,?)', (user['username'], now))
+
+    async def messages():
+        try:
+            while True:
+                yield await ws.receive_json()
+        except (WebSocketDisconnect, Exception):
+            return
+
+    try:
+        await asyncio.wait_for(
+            live.proxy(ws.send_json, messages(), job.get('title') or 'this course', page),
+            timeout=live.MAX_SECONDS)
+    except (asyncio.TimeoutError, WebSocketDisconnect, Exception):
+        pass
+    finally:
+        try:
+            await ws.send_json({'type': 'end'})
+            await ws.close()
+        except Exception:
+            pass
