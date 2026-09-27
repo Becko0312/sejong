@@ -146,6 +146,25 @@ button:disabled{opacity:.5;cursor:default}
 .voice-end{background:#fff;color:#7a2e1e;border-radius:22px;padding:11px 20px;font-size:13px;font-weight:600}
 .voice-end:hover{background:#ffe9e3}
 
+/* Live minutes: countdown + paywall */
+.live-credit{font-weight:500;opacity:.85}
+.voice-timer{margin:0;padding:6px 14px;border-radius:16px;background:rgba(255,255,255,.1);color:#eaf4ec;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
+.voice-timer.low{background:#b8432f;color:#fff}
+.paywall{position:fixed;inset:0;z-index:80;background:rgba(10,18,14,.72);display:flex;align-items:center;justify-content:center;padding:16px}
+.paywall[hidden]{display:none}
+.paywall-card{position:relative;background:#fff;color:#25382e;border-radius:18px;padding:26px 22px 20px;max-width:440px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.paywall-card h2{margin:0 0 6px;font-size:18px}
+.paywall-sub{margin:0 0 16px;font-size:13px;color:#5b6f63}
+.paywall-close{position:absolute;top:10px;right:12px;background:none;font-size:16px;color:#5b6f63}
+.paywall-packages{display:grid;gap:8px}
+.paywall-pkg{display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid #d6e2cf;background:#f6faf3;border-radius:12px;padding:12px 14px;font-size:14px;color:#25382e;text-align:left}
+.paywall-pkg:hover{background:#e8f2e2}
+.paywall-pkg strong{font-size:15px}
+.paywall-pkg .per{font-size:11px;color:#5b6f63}
+.paywall-pkg:disabled{opacity:.5}
+.paywall-pay{display:block;margin-top:14px;text-align:center;background:#264f3e;color:#fff;border-radius:22px;padding:11px 16px;font-weight:600;text-decoration:none}
+.paywall-status{margin:12px 0 0;font-size:12px;color:#5b6f63;min-height:1em}
+
 /* Split-screen live voice: TOC on the left, voice UI in the middle, book on the right */
 @media(min-width:820px){
   #app.live-active{grid-template-columns:190px 260px 1fr;grid-template-rows:100vh}

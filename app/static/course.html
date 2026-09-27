@@ -80,11 +80,22 @@
   <div class="voice-overlay" id="voice" hidden>
     <div class="voice-inner">
       <div class="orb" id="orb"><span class="orb-icon">🎙️</span></div>
+      <p class="voice-timer" id="voice-timer" hidden></p>
       <p class="voice-status" id="voice-status">Connecting…</p>
       <div class="voice-transcript" id="voice-transcript" aria-live="polite"></div>
       <p class="voice-hint">Just speak — the tutor listens and replies out loud. You can interrupt any time.</p>
       <button class="voice-end" id="voice-end">✕ End conversation</button>
     </div>
+  </div>
+</div>
+<div class="paywall" id="paywall" hidden role="dialog" aria-modal="true" aria-labelledby="paywall-title">
+  <div class="paywall-card">
+    <button type="button" class="paywall-close" id="paywall-close" aria-label="Close">✕</button>
+    <h2 id="paywall-title">Your Live voice minutes are used up</h2>
+    <p class="paywall-sub" id="paywall-sub">Top up your account to keep talking with the tutor. Minutes never expire.</p>
+    <div class="paywall-packages" id="paywall-packages"></div>
+    <a class="paywall-pay" id="paywall-pay" target="_blank" rel="noopener" hidden>Open PayLink payment page ↗</a>
+    <p class="paywall-status" id="paywall-status" aria-live="polite"></p>
   </div>
 </div>
 <script src="/static/course.js"></script>

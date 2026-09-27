@@ -12,6 +12,8 @@ COURSE_RETENTION = int(os.getenv('COURSE_RETENTION_DAYS', '3650')) * 86400
 SESSION_TTL = int(os.getenv('SESSION_TTL_DAYS', '30')) * 86400
 # Cap each self-signed-up student's tutor use per day to bound the AI bill.
 CLIENT_TUTOR_PER_DAY = int(os.getenv('CLIENT_TUTOR_PER_DAY', '60'))
+# Free Gemini Live talk time every account starts with; more is bought via PayLink.
+LIVE_FREE_SECONDS = int(os.getenv('LIVE_FREE_MINUTES', '10')) * 60
 # WAL needs shared memory, which network filesystems (Azure Files/SMB) lack; the
 # cloud deployment sets SQLITE_JOURNAL=DELETE and tolerates flock() not working there.
 JOURNAL = os.getenv('SQLITE_JOURNAL', 'WAL').upper()
@@ -54,6 +56,10 @@ def initialize():
             db.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password_hash TEXT, role TEXT, created REAL)')
             db.execute('CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, username TEXT, role TEXT, created REAL, expires REAL)')
             db.execute('CREATE TABLE IF NOT EXISTS usage (subject TEXT, created REAL)')
+            if 'live_seconds' not in {r['name'] for r in db.execute('PRAGMA table_info(users)')}:
+                db.execute(f'ALTER TABLE users ADD COLUMN live_seconds INTEGER DEFAULT {LIVE_FREE_SECONDS}')
+            db.execute('CREATE TABLE IF NOT EXISTS paylink_invoices (invid TEXT PRIMARY KEY, username TEXT, amount INTEGER, seconds INTEGER, status TEXT, created REAL, paid REAL)')
+            db.execute('CREATE TABLE IF NOT EXISTS live_sessions (username TEXT, seconds REAL, prompt_tokens INTEGER, response_tokens INTEGER, created REAL)')
 
 
 def update(job_id, **values):

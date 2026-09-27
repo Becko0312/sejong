@@ -13,7 +13,8 @@ from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSoc
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from app import auth, builder, enrich, live, store, tts, tutor
+import math
+from app import auth, billing, builder, enrich, live, store, tts, tutor
 
 PUBLIC_ORIGIN = os.getenv('PUBLIC_ORIGIN', '').rstrip('/')
 STATIC = Path(__file__).parent / 'static'
@@ -26,7 +27,19 @@ async def lifespan(app):
         raise RuntimeError('Public deployments require an HTTPS PUBLIC_ORIGIN.')
     store.initialize()
     auth.seed_admin()
+    poller = asyncio.create_task(poll_payments())
     yield
+    poller.cancel()
+
+
+async def poll_payments(interval=20):
+    # PayLink has no webhooks: reconcile pending invoices in the background.
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await asyncio.to_thread(billing.poll_pending)
+        except Exception:
+            pass
 
 
 app = FastAPI(title='Book2Course', lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -446,15 +459,15 @@ async def live_ws(ws: WebSocket, job_id: str):
     if page is None:
         await ws.send_json({'type': 'error', 'detail': 'That page is not part of this course.'})
         return
-    if user['role'] != 'admin':
-        now = time.time()
-        with store.connect() as db:
-            db.execute('BEGIN IMMEDIATE')
-            used = db.execute('SELECT count(*) FROM usage WHERE subject=? AND created>?', (user['username'], now - 86400)).fetchone()[0]
-            if used >= store.CLIENT_TUTOR_PER_DAY:
-                await ws.send_json({'type': 'error', 'detail': 'You have reached today\'s tutor limit.'})
-                return
-            db.execute('INSERT INTO usage(subject, created) VALUES(?,?)', (user['username'], now))
+    # Live talk time is prepaid: reserve this session's seconds now, refund the unused part.
+    admin = user['role'] == 'admin'
+    granted = live.MAX_SECONDS if admin else billing.reserve(user['username'], live.MAX_SECONDS)
+    if granted <= 0:
+        await ws.send_json({'type': 'no_credit', 'detail': 'Your Live voice minutes are used up.'})
+        await ws.close()
+        return
+    await ws.send_json({'type': 'credit', 'unlimited': admin, 'session_seconds': granted,
+                        'balance': None if admin else billing.balance(user['username']) + granted})
 
     async def messages():
         try:
@@ -463,18 +476,79 @@ async def live_ws(ws: WebSocket, job_id: str):
         except (WebSocketDisconnect, Exception):
             return
 
+    usage, started, reason = {}, time.monotonic(), 'done'
     try:
         await asyncio.wait_for(
-            live.proxy(ws.send_json, messages(), job.get('title') or 'this course', page),
-            timeout=live.MAX_SECONDS)
-    except (asyncio.TimeoutError, WebSocketDisconnect, Exception):
+            live.proxy(ws.send_json, messages(), job.get('title') or 'this course', page, usage),
+            timeout=granted)
+    except asyncio.TimeoutError:
+        reason = 'session' if admin or granted >= live.MAX_SECONDS else 'credit'
+    except (WebSocketDisconnect, Exception):
         pass
     finally:
+        used = min(granted, math.ceil(time.monotonic() - started))
+        remaining = None
+        if not admin:
+            billing.grant(user['username'], granted - used)
+            remaining = billing.balance(user['username'])
+            if remaining <= 0:
+                reason = 'credit'
+        billing.record_session(user['username'], used, usage)
         try:
-            await ws.send_json({'type': 'end'})
+            await ws.send_json({'type': 'end', 'reason': reason, 'balance': remaining})
             await ws.close()
         except Exception:
             pass
+
+
+# ---- Live minutes & PayLink payments ----
+
+class CheckoutRequest(BaseModel):
+    package: str = Field(max_length=20)
+
+
+class GrantRequest(BaseModel):
+    username: str = Field(max_length=64)
+    minutes: int = Field(ge=-100000, le=100000)
+
+
+@app.get('/api/billing')
+def billing_overview(request: Request):
+    return billing.overview(current(request))
+
+
+@app.post('/api/billing/checkout')
+def billing_checkout(body: CheckoutRequest, request: Request):
+    user = current(request)
+    check_csrf(request, user)
+    try:
+        return billing.create_checkout(user['username'], body.package)
+    except billing.BillingError as exc:
+        raise HTTPException(exc.code, exc.message)
+
+
+@app.post('/api/billing/invoices/{invid}/check')
+def billing_check(invid: str, request: Request):
+    user = current(request)
+    check_csrf(request, user)
+    if billing.invoice_owner(invid) != user['username']:
+        raise HTTPException(404, 'Invoice not found.')
+    status = billing.invoice_status(invid)
+    if status == 'pending':
+        try:
+            status = billing.reconcile(invid)
+        except billing.BillingError:
+            pass  # keep 'pending'; the background poller retries
+    return {'status': status, **billing.overview(user)}
+
+
+@app.post('/api/admin/live-credit')
+def admin_live_credit(body: GrantRequest, request: Request):
+    # Manual top-up (e.g. bank transfer) or correction, in minutes; negative removes time.
+    require_admin(request)
+    if not billing.grant(body.username.strip(), body.minutes * 60):
+        raise HTTPException(404, 'No such user.')
+    return {'username': body.username.strip(), 'seconds': billing.balance(body.username.strip())}
 
 
 class TtsRequest(BaseModel):

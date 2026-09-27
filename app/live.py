@@ -32,12 +32,17 @@ def system_instruction(book_title, page):
     return tutor.SYSTEM + VOICE_STYLE + "\n\n" + tutor._page_context(book_title, page)
 
 
-async def proxy(client_send, client_messages, book_title, page):
+async def proxy(client_send, client_messages, book_title, page, usage=None):
     """Relay audio/text between a browser (client_send / client_messages) and Gemini Live.
 
     client_send(dict): coroutine sending a JSON message to the browser.
     client_messages: async iterator yielding decoded JSON dicts from the browser.
+    usage: optional dict that accumulates billed tokens ('prompt'/'response') per turn.
     """
+    usage = usage if usage is not None else {}
+    usage.setdefault('prompt', 0)
+    usage.setdefault('response', 0)
+    turn = {}
     key = os.getenv('GEMINI_API_KEY')
     setup = {'setup': {
         'model': f'models/{LIVE_MODEL}',
@@ -49,6 +54,11 @@ async def proxy(client_send, client_messages, book_title, page):
         'inputAudioTranscription': {},
         'outputAudioTranscription': {},
     }}
+    def add_turn():
+        usage['prompt'] += int(turn.get('promptTokenCount') or 0)
+        usage['response'] += int(turn.get('responseTokenCount') or turn.get('candidatesTokenCount') or 0)
+        turn.clear()
+
     async with websockets.connect(f'{GEMINI_WS}?key={key}', max_size=None, ping_interval=20) as gemini:
         await gemini.send(json.dumps(setup))
 
@@ -65,6 +75,9 @@ async def proxy(client_send, client_messages, book_title, page):
         async def gemini_to_browser():
             async for raw in gemini:
                 data = json.loads(raw)
+                if data.get('usageMetadata'):
+                    # Reported per turn (latest wins); every turn re-bills the whole context.
+                    turn.update(data['usageMetadata'])
                 if 'setupComplete' in data:
                     await client_send({'type': 'ready'})
                     continue
@@ -84,6 +97,7 @@ async def proxy(client_send, client_messages, book_title, page):
                 if content.get('outputTranscription', {}).get('text'):
                     await client_send({'type': 'tutor_text', 'text': content['outputTranscription']['text']})
                 if content.get('turnComplete'):
+                    add_turn()
                     await client_send({'type': 'turn_end'})
 
         up = asyncio.ensure_future(browser_to_gemini())
@@ -93,3 +107,4 @@ async def proxy(client_send, client_messages, book_title, page):
         finally:
             up.cancel()
             down.cancel()
+            add_turn()

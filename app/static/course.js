@@ -24,6 +24,10 @@ const el = {
   liveBtn: document.getElementById('live-btn'), voice: document.getElementById('voice'),
   orb: document.getElementById('orb'), voiceStatus: document.getElementById('voice-status'),
   voiceTranscript: document.getElementById('voice-transcript'), voiceEnd: document.getElementById('voice-end'),
+  voiceTimer: document.getElementById('voice-timer'), paywall: document.getElementById('paywall'),
+  paywallClose: document.getElementById('paywall-close'), paywallTitle: document.getElementById('paywall-title'),
+  paywallSub: document.getElementById('paywall-sub'), paywallPackages: document.getElementById('paywall-packages'),
+  paywallPay: document.getElementById('paywall-pay'), paywallStatus: document.getElementById('paywall-status'),
   micLang: document.getElementById('mic-lang'), status: document.getElementById('tutor-status'),
   tutorPanel: document.getElementById('tutor'), tutorToggle: document.getElementById('tutor-toggle'),
   teachActions: document.getElementById('teach-actions'),
@@ -204,6 +208,7 @@ function setupTutor() {
   }
   // Live voice needs the Gemini provider (bidirectional audio); hide it otherwise.
   if (!(state.tutor.enabled && state.tutor.provider === 'gemini')) el.liveBtn.hidden = true;
+  else loadBilling();
   setupMic();
 }
 
@@ -586,7 +591,7 @@ window.addEventListener('resize', applyZoom);
 const b64ToInt16 = (b64) => { const bin = atob(b64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); return new Int16Array(bytes.buffer); };
 const int16ToB64 = (buf) => { const bytes = new Uint8Array(buf); let s = ''; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return btoa(s); };
 
-const live = { active: false, ws: null, capCtx: null, playCtx: null, stream: null, playNode: null, lastRole: null };
+const live = { active: false, timer: null, ws: null, capCtx: null, playCtx: null, stream: null, playNode: null, lastRole: null };
 
 function vStatus(text, cls) { el.voiceStatus.textContent = text; el.voice.className = 'voice-overlay' + (cls ? ' ' + cls : ''); }
 function vLine(role, text) {
@@ -597,6 +602,7 @@ function vLine(role, text) {
 
 async function startLive() {
   if (live.active || !state.tutor.enabled) return;
+  if (state.billing && !state.billing.unlimited && state.billing.seconds <= 0) { openPaywall(true); return; }
   live.active = true; live.lastRole = null;
   el.voice.hidden = false; el.voiceTranscript.innerHTML = ''; vStatus('Connecting…');
   document.getElementById('app').classList.add('live-active');
@@ -622,13 +628,20 @@ async function startLive() {
     live.ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
       if (m.type === 'ready') vStatus('Listening — go ahead', 'listening');
+      else if (m.type === 'credit') startTimer(m);
+      else if (m.type === 'no_credit') { stopLive(); setBalance(0); openPaywall(true); }
       else if (m.type === 'audio') { const pcm = b64ToInt16(m.data); const f = new Float32Array(pcm.length); for (let i = 0; i < pcm.length; i++) f[i] = pcm[i] / 32768; live.playNode.port.postMessage(f); }
       else if (m.type === 'interrupted') live.playNode.port.postMessage('clear');
       else if (m.type === 'user_text') vLine('you', m.text);
       else if (m.type === 'tutor_text') vLine('tutor', m.text);
       else if (m.type === 'turn_end') live.lastRole = null;
       else if (m.type === 'error') { vStatus(m.detail || 'The tutor is unavailable.'); setTimeout(stopLive, 2500); }
-      else if (m.type === 'end') stopLive();
+      else if (m.type === 'end') {
+        stopLive();
+        if (m.balance != null) setBalance(m.balance);
+        if (m.reason === 'credit') openPaywall(true);
+        else if (m.reason === 'session') addNote('The voice session reached its time limit. Tap “Talk with tutor” to continue.');
+      }
     };
     live.ws.onerror = () => vStatus('Connection error.');
     live.ws.onclose = () => { if (live.active) stopLive(); };
@@ -640,6 +653,7 @@ async function startLive() {
 
 function stopLive() {
   live.active = false;
+  clearInterval(live.timer); live.timer = null; el.voiceTimer.hidden = true;
   el.voice.hidden = true;
   document.getElementById('app').classList.remove('live-active');
   zoomIdx = ZOOM_FIT; applyZoom();
@@ -651,6 +665,120 @@ function stopLive() {
   live.ws = live.stream = live.capCtx = live.playCtx = live.playNode = null;
 }
 
+/* ---------- Live minutes: countdown + PayLink top-up ---------- */
+const fmtClock = (sec) => `${Math.floor(sec / 60)}:${String(Math.max(0, sec) % 60).padStart(2, '0')}`;
+const fmtMnt = (n) => '₮' + n.toLocaleString('en-US');
+
+function setBalance(seconds) {
+  if (!state.billing) return;
+  state.billing.seconds = Math.max(0, seconds);
+  renderLiveLabel();
+}
+
+function renderLiveLabel() {
+  const b = state.billing;
+  const extra = !b || b.unlimited ? '' : b.seconds > 0 ? ` (${Math.ceil(b.seconds / 60)} min left)` : ' (top up)';
+  el.liveBtn.textContent = '🎙️ Talk with tutor — Live voice';
+  if (extra) { const span = document.createElement('span'); span.className = 'live-credit'; span.textContent = extra; el.liveBtn.appendChild(span); }
+}
+
+async function loadBilling() {
+  try { const res = await fetch('/api/billing'); if (res.ok) { state.billing = await res.json(); renderLiveLabel(); } } catch (_) {}
+}
+
+// Counts the student's whole remaining balance down; the server enforces the same limit.
+function startTimer(m) {
+  clearInterval(live.timer);
+  if (m.unlimited) { el.voiceTimer.hidden = true; return; }
+  const endsAt = Date.now() + m.balance * 1000;
+  const tick = () => {
+    const left = Math.max(0, Math.round((endsAt - Date.now()) / 1000));
+    el.voiceTimer.hidden = false;
+    el.voiceTimer.textContent = `⏱ ${fmtClock(left)} left`;
+    el.voiceTimer.classList.toggle('low', left <= 60);
+    setBalance(left);
+    if (left <= 0) { stopLive(); openPaywall(true); }
+  };
+  tick();
+  live.timer = setInterval(tick, 1000);
+}
+
+const pay = { invid: null, poll: null };
+
+function openPaywall(outOfMinutes) {
+  const b = state.billing || { packages: [], paylink: false, free_minutes: 10 };
+  el.paywallTitle.textContent = outOfMinutes ? 'Your Live voice minutes are used up' : 'Buy Live voice minutes';
+  el.paywallSub.textContent = outOfMinutes
+    ? `You have used your ${b.free_minutes} free minutes. Top up to keep talking with the tutor — minutes never expire.`
+    : 'Top up to keep talking with the tutor — minutes never expire.';
+  el.paywallPackages.innerHTML = '';
+  for (const p of b.packages) {
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'paywall-pkg'; btn.disabled = !b.paylink;
+    const left = document.createElement('span');
+    const name = document.createElement('strong'); name.textContent = `${p.minutes} minutes`;
+    const per = document.createElement('div'); per.className = 'per'; per.textContent = `${fmtMnt(Math.round(p.price / p.minutes))} / min`;
+    left.append(name, per);
+    const price = document.createElement('strong'); price.textContent = fmtMnt(p.price);
+    btn.append(left, price);
+    btn.addEventListener('click', () => checkout(p));
+    el.paywallPackages.appendChild(btn);
+  }
+  el.paywallPay.hidden = true;
+  el.paywallStatus.textContent = b.paylink ? 'You will pay on the secure PayLink page (QPay, bank apps, cards).' : 'Online payment is not switched on yet — please contact the administrator to add minutes.';
+  el.paywall.hidden = false;
+}
+
+function closePaywall() { el.paywall.hidden = true; clearInterval(pay.poll); pay.poll = null; }
+
+async function checkout(p) {
+  el.paywallStatus.textContent = 'Creating your invoice…';
+  el.paywallPackages.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+  try {
+    const res = await fetch('/api/billing/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrf }, body: JSON.stringify({ package: p.id }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || 'Could not create the invoice.');
+    pay.invid = data.invid;
+    el.paywallPay.href = data.payment_link; el.paywallPay.hidden = false;
+    el.paywallPay.textContent = `Pay ${fmtMnt(p.price)} on PayLink ↗`;
+    el.paywallStatus.textContent = 'Waiting for payment… this window updates automatically once you have paid.';
+    clearInterval(pay.poll);
+    const started = Date.now();
+    pay.poll = setInterval(() => checkInvoice(started), 4000);
+  } catch (err) {
+    el.paywallStatus.textContent = err.message;
+    el.paywallPackages.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+  }
+}
+
+async function checkInvoice(started) {
+  if (Date.now() - started > 20 * 60 * 1000) { clearInterval(pay.poll); el.paywallStatus.textContent = 'Still waiting. If you paid, your minutes will appear shortly — refresh the page.'; return; }
+  try {
+    const res = await fetch(`/api/billing/invoices/${encodeURIComponent(pay.invid)}/check`, { method: 'POST', headers: { 'X-CSRF-Token': state.csrf } });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.status === 'paid') {
+      clearInterval(pay.poll); pay.poll = null;
+      state.billing = data; renderLiveLabel();
+      el.paywallPay.hidden = true;
+      el.paywallPackages.innerHTML = '';
+      el.paywallTitle.textContent = 'Payment received — thank you!';
+      el.paywallSub.textContent = `You now have ${Math.floor(data.seconds / 60)} minutes of Live voice.`;
+      const go = document.createElement('button');
+      go.type = 'button'; go.className = 'paywall-pay'; go.textContent = '🎙️ Continue talking';
+      go.addEventListener('click', () => { closePaywall(); startLive(); });
+      el.paywallPackages.appendChild(go);
+      el.paywallStatus.textContent = '';
+    } else if (data.status === 'canceled' || data.status === 'cancelled' || data.status === 'expired') {
+      clearInterval(pay.poll); pay.poll = null;
+      el.paywallStatus.textContent = `The invoice was ${data.status}. Choose a package to try again.`;
+      el.paywallPay.hidden = true;
+      el.paywallPackages.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+    }
+  } catch (_) {}
+}
+
+el.paywallClose.addEventListener('click', closePaywall);
 el.liveBtn.addEventListener('click', () => { if (live.active) stopLive(); else startLive(); });
 el.voiceEnd.addEventListener('click', stopLive);
 
