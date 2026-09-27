@@ -24,10 +24,7 @@ const el = {
   liveBtn: document.getElementById('live-btn'), voice: document.getElementById('voice'),
   orb: document.getElementById('orb'), voiceStatus: document.getElementById('voice-status'),
   voiceTranscript: document.getElementById('voice-transcript'), voiceEnd: document.getElementById('voice-end'),
-  voiceTimer: document.getElementById('voice-timer'), paywall: document.getElementById('paywall'),
-  paywallClose: document.getElementById('paywall-close'), paywallTitle: document.getElementById('paywall-title'),
-  paywallSub: document.getElementById('paywall-sub'), paywallPackages: document.getElementById('paywall-packages'),
-  paywallPay: document.getElementById('paywall-pay'), paywallStatus: document.getElementById('paywall-status'),
+  voiceTimer: document.getElementById('voice-timer'),
   micLang: document.getElementById('mic-lang'), status: document.getElementById('tutor-status'),
   tutorPanel: document.getElementById('tutor'), tutorToggle: document.getElementById('tutor-toggle'),
   teachActions: document.getElementById('teach-actions'),
@@ -602,7 +599,6 @@ function vLine(role, text) {
 
 async function startLive() {
   if (live.active || !state.tutor.enabled) return;
-  if (state.billing && !state.billing.unlimited && state.billing.seconds <= 0) { openPaywall(true); return; }
   live.active = true; live.lastRole = null;
   el.voice.hidden = false; el.voiceTranscript.innerHTML = ''; vStatus('Connecting…');
   document.getElementById('app').classList.add('live-active');
@@ -629,7 +625,7 @@ async function startLive() {
       const m = JSON.parse(ev.data);
       if (m.type === 'ready') vStatus('Listening — go ahead', 'listening');
       else if (m.type === 'credit') startTimer(m);
-      else if (m.type === 'no_credit') { stopLive(); setBalance(0); openPaywall(true); }
+      else if (m.type === 'no_credit') { stopLive(); setBalance(0); minutesUsedUp(); }
       else if (m.type === 'audio') { const pcm = b64ToInt16(m.data); const f = new Float32Array(pcm.length); for (let i = 0; i < pcm.length; i++) f[i] = pcm[i] / 32768; live.playNode.port.postMessage(f); }
       else if (m.type === 'interrupted') live.playNode.port.postMessage('clear');
       else if (m.type === 'user_text') vLine('you', m.text);
@@ -639,7 +635,7 @@ async function startLive() {
       else if (m.type === 'end') {
         stopLive();
         if (m.balance != null) setBalance(m.balance);
-        if (m.reason === 'credit') openPaywall(true);
+        if (m.reason === 'credit') minutesUsedUp();
         else if (m.reason === 'session') addNote('The voice session reached its time limit. Tap “Talk with tutor” to continue.');
       }
     };
@@ -675,11 +671,19 @@ function setBalance(seconds) {
   renderLiveLabel();
 }
 
+const outOfMinutes = () => state.billing && !state.billing.unlimited && state.billing.seconds <= 0;
+
+// Once the minutes are gone, the Live button turns into a “Pay now” button.
 function renderLiveLabel() {
   const b = state.billing;
-  const extra = !b || b.unlimited ? '' : b.seconds > 0 ? ` (${Math.ceil(b.seconds / 60)} min left)` : ' (top up)';
+  el.liveBtn.classList.toggle('pay-now', !!outOfMinutes());
+  if (outOfMinutes()) {
+    const p = b.packages[0];
+    el.liveBtn.textContent = p ? `💳 Pay now — ${p.minutes} min for ${fmtMnt(p.price)}` : '💳 Pay now';
+    return;
+  }
   el.liveBtn.textContent = '🎙️ Talk with tutor — Live voice';
-  if (extra) { const span = document.createElement('span'); span.className = 'live-credit'; span.textContent = extra; el.liveBtn.appendChild(span); }
+  if (b && !b.unlimited) { const span = document.createElement('span'); span.className = 'live-credit'; span.textContent = ` (${Math.ceil(b.seconds / 60)} min left)`; el.liveBtn.appendChild(span); }
 }
 
 async function loadBilling() {
@@ -697,89 +701,36 @@ function startTimer(m) {
     el.voiceTimer.textContent = `⏱ ${fmtClock(left)} left`;
     el.voiceTimer.classList.toggle('low', left <= 60);
     setBalance(left);
-    if (left <= 0) { stopLive(); openPaywall(true); }
+    if (left <= 0) { stopLive(); minutesUsedUp(); }
   };
   tick();
   live.timer = setInterval(tick, 1000);
 }
 
-const pay = { invid: null, poll: null };
-
-function openPaywall(outOfMinutes) {
-  const b = state.billing || { packages: [], paylink: false, free_minutes: 10 };
-  el.paywallTitle.textContent = outOfMinutes ? 'Your Live voice minutes are used up' : 'Buy Live voice minutes';
-  el.paywallSub.textContent = outOfMinutes
-    ? `You have used your ${b.free_minutes} free minutes. Top up to keep talking with the tutor — minutes never expire.`
-    : 'Top up to keep talking with the tutor — minutes never expire.';
-  el.paywallPackages.innerHTML = '';
-  for (const p of b.packages) {
-    const btn = document.createElement('button');
-    btn.type = 'button'; btn.className = 'paywall-pkg'; btn.disabled = !b.paylink;
-    const left = document.createElement('span');
-    const name = document.createElement('strong'); name.textContent = `${p.minutes} minutes`;
-    const per = document.createElement('div'); per.className = 'per'; per.textContent = `${fmtMnt(Math.round(p.price / p.minutes))} / min`;
-    left.append(name, per);
-    const price = document.createElement('strong'); price.textContent = fmtMnt(p.price);
-    btn.append(left, price);
-    btn.addEventListener('click', () => checkout(p));
-    el.paywallPackages.appendChild(btn);
-  }
-  el.paywallPay.hidden = true;
-  el.paywallStatus.textContent = b.paylink ? 'You will pay on the secure PayLink page (QPay, bank apps, cards).' : 'Online payment is not switched on yet — please contact the administrator to add minutes.';
-  el.paywall.hidden = false;
+function minutesUsedUp() {
+  const b = state.billing || {};
+  addNote(`Your ${b.free_minutes || 10} free Live voice minutes are used up. Tap “Pay now” to buy more and keep talking.`);
+  renderLiveLabel();
 }
 
-function closePaywall() { el.paywall.hidden = true; clearInterval(pay.poll); pay.poll = null; }
-
-async function checkout(p) {
-  el.paywallStatus.textContent = 'Creating your invoice…';
-  el.paywallPackages.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+// Pay now: create a PayLink invoice and send the student straight to paylink.mn.
+// Minutes are credited by the server's poller; coming back to the course shows the new balance.
+async function payNow() {
+  const p = (state.billing && state.billing.packages[0]) || null;
+  if (!p) return;
+  el.liveBtn.disabled = true; el.liveBtn.textContent = 'Opening PayLink…';
   try {
     const res = await fetch('/api/billing/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrf }, body: JSON.stringify({ package: p.id }) });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || 'Could not create the invoice.');
-    pay.invid = data.invid;
-    el.paywallPay.href = data.payment_link; el.paywallPay.hidden = false;
-    el.paywallPay.textContent = `Pay ${fmtMnt(p.price)} on PayLink ↗`;
-    el.paywallStatus.textContent = 'Waiting for payment… this window updates automatically once you have paid.';
-    clearInterval(pay.poll);
-    const started = Date.now();
-    pay.poll = setInterval(() => checkInvoice(started), 4000);
+    if (!res.ok || !data.payment_link) throw new Error(data.detail || 'Could not open the payment page.');
+    location.href = data.payment_link;
   } catch (err) {
-    el.paywallStatus.textContent = err.message;
-    el.paywallPackages.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+    addNote(err.message);
+    el.liveBtn.disabled = false; renderLiveLabel();
   }
 }
 
-async function checkInvoice(started) {
-  if (Date.now() - started > 20 * 60 * 1000) { clearInterval(pay.poll); el.paywallStatus.textContent = 'Still waiting. If you paid, your minutes will appear shortly — refresh the page.'; return; }
-  try {
-    const res = await fetch(`/api/billing/invoices/${encodeURIComponent(pay.invid)}/check`, { method: 'POST', headers: { 'X-CSRF-Token': state.csrf } });
-    if (!res.ok) return;
-    const data = await res.json();
-    if (data.status === 'paid') {
-      clearInterval(pay.poll); pay.poll = null;
-      state.billing = data; renderLiveLabel();
-      el.paywallPay.hidden = true;
-      el.paywallPackages.innerHTML = '';
-      el.paywallTitle.textContent = 'Payment received — thank you!';
-      el.paywallSub.textContent = `You now have ${Math.floor(data.seconds / 60)} minutes of Live voice.`;
-      const go = document.createElement('button');
-      go.type = 'button'; go.className = 'paywall-pay'; go.textContent = '🎙️ Continue talking';
-      go.addEventListener('click', () => { closePaywall(); startLive(); });
-      el.paywallPackages.appendChild(go);
-      el.paywallStatus.textContent = '';
-    } else if (data.status === 'canceled' || data.status === 'cancelled' || data.status === 'expired') {
-      clearInterval(pay.poll); pay.poll = null;
-      el.paywallStatus.textContent = `The invoice was ${data.status}. Choose a package to try again.`;
-      el.paywallPay.hidden = true;
-      el.paywallPackages.querySelectorAll('button').forEach((b) => { b.disabled = false; });
-    }
-  } catch (_) {}
-}
-
-el.paywallClose.addEventListener('click', closePaywall);
-el.liveBtn.addEventListener('click', () => { if (live.active) stopLive(); else startLive(); });
+el.liveBtn.addEventListener('click', () => { if (live.active) stopLive(); else if (outOfMinutes()) payNow(); else startLive(); });
 el.voiceEnd.addEventListener('click', stopLive);
 
 boot();

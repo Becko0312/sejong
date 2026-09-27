@@ -62,7 +62,7 @@ def _call(pc, payload):
         raise BillingError('The payment service is not reachable right now.') from exc
     if data.get('response_code') != SUCCESS:
         log.warning('PayLink %s failed: %s %s', pc, data.get('response_code'), str(data.get('response'))[:200])
-        raise BillingError('The payment service rejected the request. Please try again later.')
+        raise BillingError('Online payment is temporarily unavailable. Please try again later or contact the administrator.')
     return data.get('response') or {}
 
 
@@ -157,19 +157,13 @@ def invoice_status(invid):
     return row['status'] if row else None
 
 
-def invoice_owner(invid):
-    with store.connect() as db:
-        row = db.execute('SELECT username FROM paylink_invoices WHERE invid=?', (invid,)).fetchone()
-    return row['username'] if row else None
-
-
-def poll_pending(max_age=86400):
-    """Reconcile every recent pending invoice (called by the background poller)."""
+def poll_pending(username=None, max_age=86400):
+    """Reconcile recent pending invoices — everyone's (background poller) or one student's."""
     if not paylink_configured():
         return 0
     with store.connect() as db:
-        rows = db.execute("SELECT invid FROM paylink_invoices WHERE status='pending' AND created>?",
-                          (time.time() - max_age,)).fetchall()
+        rows = db.execute("SELECT invid FROM paylink_invoices WHERE status='pending' AND created>? AND (? IS NULL OR username=?)",
+                          (time.time() - max_age, username, username)).fetchall()
     paid = 0
     for row in rows:
         try:

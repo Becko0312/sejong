@@ -111,20 +111,23 @@ def test_paylink_checkout_credits_minutes_once(client_user, monkeypatch):
     assert calls[0][0] == 'cu0900' and calls[0][1]['amount'] == 5000
     assert calls[0][2]['X-SIGNATURE'] == billing.signature('pw')
 
-    assert c.post('/api/billing/invoices/INV-1/check', headers=hc).json()['status'] == 'pending'
+    assert c.get('/api/billing').json()['seconds'] == 600             # not paid yet
     status[0] = 'paid'
-    res = c.post('/api/billing/invoices/INV-1/check', headers=hc).json()
-    assert res['status'] == 'paid' and res['seconds'] == 600 + 1800
-    billing.poll_pending()                                        # poller must not credit twice
-    assert c.post('/api/billing/invoices/INV-1/check', headers=hc).json()['seconds'] == 600 + 1800
+    assert c.get('/api/billing').json()['seconds'] == 600 + 1800      # back from paylink.mn
+    billing.poll_pending()                                            # poller must not credit twice
+    assert c.get('/api/billing').json()['seconds'] == 600 + 1800
+    assert billing.invoice_status('INV-1') == 'paid'
 
 
-def test_invoice_check_is_owner_only(admin, client_user, monkeypatch):
-    fake_paylink(monkeypatch, ['pending'])
+def test_student_only_reconciles_own_invoices(admin, client_user, monkeypatch):
+    status = ['pending']
+    calls, _ = fake_paylink(monkeypatch, status)
     c, hc = client_user
     c.post('/api/billing/checkout', json={'package': '30min'}, headers=hc)
-    a, ha = admin
-    assert a.post('/api/billing/invoices/INV-1/check', headers=ha).status_code == 404
+    status[0] = 'paid'
+    a, _ = admin
+    a.get('/api/billing')                                  # admin page load: no PayLink calls
+    assert [pc for pc, *_ in calls] == ['cu0900']
 
 
 def test_checkout_without_paylink_config(client_user, monkeypatch):

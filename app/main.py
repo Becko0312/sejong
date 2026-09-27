@@ -514,7 +514,11 @@ class GrantRequest(BaseModel):
 
 @app.get('/api/billing')
 def billing_overview(request: Request):
-    return billing.overview(current(request))
+    # A student coming back from paylink.mn sees their new minutes without waiting for the poller.
+    user = current(request)
+    if user['role'] != 'admin':
+        billing.poll_pending(user['username'])
+    return billing.overview(user)
 
 
 @app.post('/api/billing/checkout')
@@ -525,21 +529,6 @@ def billing_checkout(body: CheckoutRequest, request: Request):
         return billing.create_checkout(user['username'], body.package)
     except billing.BillingError as exc:
         raise HTTPException(exc.code, exc.message)
-
-
-@app.post('/api/billing/invoices/{invid}/check')
-def billing_check(invid: str, request: Request):
-    user = current(request)
-    check_csrf(request, user)
-    if billing.invoice_owner(invid) != user['username']:
-        raise HTTPException(404, 'Invoice not found.')
-    status = billing.invoice_status(invid)
-    if status == 'pending':
-        try:
-            status = billing.reconcile(invid)
-        except billing.BillingError:
-            pass  # keep 'pending'; the background poller retries
-    return {'status': status, **billing.overview(user)}
 
 
 @app.post('/api/admin/live-credit')
