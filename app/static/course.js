@@ -27,6 +27,8 @@ const el = {
   micLang: document.getElementById('mic-lang'), status: document.getElementById('tutor-status'),
   tutorPanel: document.getElementById('tutor'), tutorToggle: document.getElementById('tutor-toggle'),
   teachActions: document.getElementById('teach-actions'),
+  zoomCtl: document.getElementById('zoom-ctl'), zoomIn: document.getElementById('zoom-in'),
+  zoomOut: document.getElementById('zoom-out'), zoomReset: document.getElementById('zoom-reset'),
 };
 const LANG = { korean: 'Korean', japanese: 'Japanese', chinese: 'Chinese', english: 'English' };
 
@@ -152,6 +154,7 @@ function showHome() {
   location.hash = '';
   el.home.hidden = false;
   el.stage.hidden = true;
+  el.zoomCtl.hidden = true;
   el.teachActions.hidden = true;
   el.lessonLabel.textContent = '';
   el.pageLabel.textContent = `${state.pages.length} pages`;
@@ -454,6 +457,7 @@ function applyView() {
   el.frame.hidden = interactive;
   el.textBox.hidden = interactive;
   el.interactive.hidden = !interactive;
+  el.zoomCtl.hidden = interactive;
   if (interactive && state.current) loadInteractive(state.current);
 }
 
@@ -538,6 +542,46 @@ el.tutorToggle.addEventListener('click', () => {
   el.tutorToggle.setAttribute('aria-expanded', String(hidden));
 });
 
+/* ---------- Book zoom (Live voice split view) ---------- */
+const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3];
+const ZOOM_FIT = ZOOM_STEPS.indexOf(1);
+let zoomIdx = ZOOM_FIT;
+
+// 100% is the CSS whole-page fit; other levels size the image in px relative to that fit.
+function applyZoom() {
+  const z = ZOOM_STEPS[zoomIdx];
+  el.zoomReset.textContent = `${Math.round(z * 100)}%`;
+  el.zoomOut.disabled = zoomIdx === 0;
+  el.zoomIn.disabled = zoomIdx === ZOOM_STEPS.length - 1;
+  const img = el.image;
+  const zoomed = z !== 1 && app.classList.contains('live-active') && img.naturalWidth > 0;
+  if (!zoomed) { el.stage.classList.remove('zoomed'); img.style.width = ''; return; }
+  if (!el.stage.offsetWidth) return;
+  // offset* includes scrollbars, so each zoom step stays an exact multiple of the fit size.
+  const cs = getComputedStyle(el.stage);
+  const availW = el.stage.offsetWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 2;
+  const availH = el.stage.offsetHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - 2;
+  const fit = Math.min(1, availW / img.naturalWidth, availH / img.naturalHeight);
+  el.stage.classList.add('zoomed');
+  img.style.width = `${Math.round(img.naturalWidth * fit * z)}px`;
+}
+
+function setZoom(idx) {
+  const st = el.stage;
+  const cx = (st.scrollLeft + st.clientWidth / 2) / st.scrollWidth;
+  const cy = (st.scrollTop + st.clientHeight / 2) / st.scrollHeight;
+  zoomIdx = Math.max(0, Math.min(ZOOM_STEPS.length - 1, idx));
+  applyZoom();
+  st.scrollLeft = cx * st.scrollWidth - st.clientWidth / 2;
+  st.scrollTop = cy * st.scrollHeight - st.clientHeight / 2;
+}
+
+el.zoomIn.addEventListener('click', () => setZoom(zoomIdx + 1));
+el.zoomOut.addEventListener('click', () => setZoom(zoomIdx - 1));
+el.zoomReset.addEventListener('click', () => setZoom(ZOOM_FIT));
+el.image.addEventListener('load', applyZoom);
+window.addEventListener('resize', applyZoom);
+
 /* ---------- Live voice mode (Gemini Live via server proxy) ---------- */
 const b64ToInt16 = (b64) => { const bin = atob(b64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); return new Int16Array(bytes.buffer); };
 const int16ToB64 = (buf) => { const bytes = new Uint8Array(buf); let s = ''; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return btoa(s); };
@@ -598,6 +642,7 @@ function stopLive() {
   live.active = false;
   el.voice.hidden = true;
   document.getElementById('app').classList.remove('live-active');
+  zoomIdx = ZOOM_FIT; applyZoom();
   el.liveBtn.classList.remove('active');
   try { live.ws && live.ws.close(); } catch (_) {}
   try { live.stream && live.stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
