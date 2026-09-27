@@ -6,14 +6,23 @@ and transcripts back. The Gemini key stays server-side, and the session is groun
 in the page the student is viewing. Requires the Gemini provider (bidiGenerateContent).
 """
 import asyncio
+import collections
 import json
+import logging
 import os
 import websockets
 from app import languages, tutor
 
 GEMINI_WS = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent'
 LIVE_MODEL = os.getenv('GEMINI_LIVE_MODEL', 'gemini-2.5-flash-native-audio-latest')
-MAX_SECONDS = int(os.getenv('LIVE_MAX_SECONDS', '300'))
+# Safety cap for one session (a forgotten open tab); the student's balance usually ends it first.
+MAX_SECONDS = int(os.getenv('LIVE_MAX_SECONDS', '3600'))
+# Talk time is charged ahead in blocks of this many seconds while the session runs.
+BILLING_BLOCK = int(os.getenv('LIVE_BILLING_BLOCK_SECONDS', '60'))
+# Google closes a Live connection after ~10 minutes (sending goAway first). We reconnect with a
+# session-resumption handle so the talk continues; this many failed reconnects in a row ends it.
+MAX_RECONNECT_FAILURES = 2
+log = logging.getLogger(__name__)
 VOICE = os.getenv('GEMINI_LIVE_VOICE', 'Aoede')
 # Barge-in tuning: short noises or speaker echo must not count as the student speaking,
 # otherwise Gemini aborts its reply mid-sentence and waits for a turn that never came.
@@ -66,75 +75,130 @@ async def proxy(client_send, client_messages, book_title, page, usage=None, cour
     client_messages: async iterator yielding decoded JSON dicts from the browser.
     usage: optional dict that accumulates billed tokens ('prompt'/'response') per turn.
     course_languages: language names the student may speak (see languages.for_course).
+
+    One Gemini connection only lives ~10 minutes, so a talk is carried over as many connections
+    as needed: context-window compression lifts the 15-minute audio-session limit, and session
+    resumption lets each new connection continue the same conversation. The browser never notices.
     """
     usage = usage if usage is not None else {}
     usage.setdefault('prompt', 0)
     usage.setdefault('response', 0)
     turn = {}
     key = os.getenv('GEMINI_API_KEY')
-    setup = {'setup': {
-        'model': f'models/{LIVE_MODEL}',
-        'generationConfig': {'responseModalities': ['AUDIO'],
-                             'speechConfig': {'voiceConfig': {'prebuiltVoiceConfig': {'voiceName': VOICE}}}},
-        'systemInstruction': {'parts': [{'text': system_instruction(book_title, page, course_languages)}]},
-        'realtimeInputConfig': {'automaticActivityDetection': {
-            'startOfSpeechSensitivity': START_SENSITIVITY, 'prefixPaddingMs': PREFIX_PADDING_MS}},
-        'inputAudioTranscription': {},
-        'outputAudioTranscription': {},
-    }}
+    instruction = system_instruction(book_title, page, course_languages)
+    # gemini: the connection that takes input (None while connecting); handle: latest resume point.
+    state = {'gemini': None, 'handle': None}
+    # Student input that arrives while we reconnect; sent once the new connection is ready.
+    pending = collections.deque(maxlen=400)
+
+    def setup():
+        return {'setup': {
+            'model': f'models/{LIVE_MODEL}',
+            'generationConfig': {'responseModalities': ['AUDIO'],
+                                 'speechConfig': {'voiceConfig': {'prebuiltVoiceConfig': {'voiceName': VOICE}}}},
+            'systemInstruction': {'parts': [{'text': instruction}]},
+            'realtimeInputConfig': {'automaticActivityDetection': {
+                'startOfSpeechSensitivity': START_SENSITIVITY, 'prefixPaddingMs': PREFIX_PADDING_MS}},
+            'inputAudioTranscription': {},
+            'outputAudioTranscription': {},
+            'contextWindowCompression': {'slidingWindow': {}},
+            'sessionResumption': {'handle': state['handle']} if state['handle'] else {},
+        }}
+
     def add_turn():
         usage['prompt'] += int(turn.get('promptTokenCount') or 0)
         usage['response'] += int(turn.get('responseTokenCount') or turn.get('candidatesTokenCount') or 0)
         turn.clear()
 
-    async with websockets.connect(f'{GEMINI_WS}?key={key}', max_size=None, ping_interval=20) as gemini:
-        await gemini.send(json.dumps(setup))
+    def to_gemini(message):
+        kind = message.get('type')
+        if kind == 'audio':
+            return {'realtimeInput': {'mediaChunks': [{'mimeType': 'audio/pcm;rate=16000', 'data': message['data']}]}}
+        if kind == 'text' and message.get('text'):
+            return {'clientContent': {'turns': [{'role': 'user', 'parts': [{'text': message['text'][:2000]}]}],
+                                      'turnComplete': True}}
+        return None
 
-        async def browser_to_gemini():
-            async for message in client_messages:
-                kind = message.get('type')
-                if kind == 'audio':
-                    await gemini.send(json.dumps({'realtimeInput': {'mediaChunks': [
-                        {'mimeType': 'audio/pcm;rate=16000', 'data': message['data']}]}}))
-                elif kind == 'text' and message.get('text'):
-                    await gemini.send(json.dumps({'clientContent': {
-                        'turns': [{'role': 'user', 'parts': [{'text': message['text'][:2000]}]}], 'turnComplete': True}}))
+    async def browser_to_gemini():
+        async for message in client_messages:
+            out = to_gemini(message)
+            if out is None:
+                continue
+            gemini = state['gemini']
+            if gemini is None:
+                pending.append(out)
+                continue
+            try:
+                await gemini.send(json.dumps(out))
+            except websockets.ConnectionClosed:
+                pending.append(out)
 
-        async def gemini_to_browser():
-            async for raw in gemini:
-                data = json.loads(raw)
-                if data.get('usageMetadata'):
-                    # Reported per turn (latest wins); every turn re-bills the whole context.
-                    turn.update(data['usageMetadata'])
-                if 'setupComplete' in data:
-                    await client_send({'type': 'ready'})
-                    await gemini.send(json.dumps({'clientContent': {
-                        'turns': [{'role': 'user', 'parts': [{'text': KICKOFF}]}], 'turnComplete': True}}))
-                    continue
-                content = data.get('serverContent')
-                if not content:
-                    if data.get('goAway') is not None:
-                        await client_send({'type': 'end'})
-                    continue
-                if content.get('interrupted'):
-                    await client_send({'type': 'interrupted'})
-                for part in (content.get('modelTurn', {}).get('parts') or []):
-                    inline = part.get('inlineData')
-                    if inline and (inline.get('mimeType') or '').startswith('audio/'):
-                        await client_send({'type': 'audio', 'data': inline['data']})
-                if content.get('inputTranscription', {}).get('text'):
-                    await client_send({'type': 'user_text', 'text': content['inputTranscription']['text']})
-                if content.get('outputTranscription', {}).get('text'):
-                    await client_send({'type': 'tutor_text', 'text': content['outputTranscription']['text']})
-                if content.get('turnComplete'):
-                    add_turn()
-                    await client_send({'type': 'turn_end'})
-
-        up = asyncio.ensure_future(browser_to_gemini())
-        down = asyncio.ensure_future(gemini_to_browser())
+    async def connection(resuming):
+        """Run one Gemini connection; returns True if it got ready (setupComplete)."""
+        ready = False
         try:
-            await asyncio.wait({up, down}, return_when=asyncio.FIRST_COMPLETED)
+            async with websockets.connect(f'{GEMINI_WS}?key={key}', max_size=None, ping_interval=20) as gemini:
+                await gemini.send(json.dumps(setup()))
+                async for raw in gemini:
+                    data = json.loads(raw)
+                    if data.get('usageMetadata'):
+                        # Reported per turn (latest wins); every turn re-bills the whole context.
+                        turn.update(data['usageMetadata'])
+                    update = data.get('sessionResumptionUpdate')
+                    if update and update.get('resumable') and update.get('newHandle'):
+                        state['handle'] = update['newHandle']
+                    if 'setupComplete' in data:
+                        ready = True
+                        if resuming:
+                            while pending:
+                                await gemini.send(json.dumps(pending.popleft()))
+                        else:
+                            pending.clear()
+                            await client_send({'type': 'ready'})
+                            await gemini.send(json.dumps({'clientContent': {
+                                'turns': [{'role': 'user', 'parts': [{'text': KICKOFF}]}], 'turnComplete': True}}))
+                        state['gemini'] = gemini
+                        continue
+                    if data.get('goAway') is not None:
+                        # Google is about to close this connection: move to a new one now.
+                        log.info('Gemini Live goAway (%s left); resuming on a new connection',
+                                 data['goAway'].get('timeLeft'))
+                        return ready
+                    content = data.get('serverContent')
+                    if not content:
+                        continue
+                    if content.get('interrupted'):
+                        await client_send({'type': 'interrupted'})
+                    for part in (content.get('modelTurn', {}).get('parts') or []):
+                        inline = part.get('inlineData')
+                        if inline and (inline.get('mimeType') or '').startswith('audio/'):
+                            await client_send({'type': 'audio', 'data': inline['data']})
+                    if content.get('inputTranscription', {}).get('text'):
+                        await client_send({'type': 'user_text', 'text': content['inputTranscription']['text']})
+                    if content.get('outputTranscription', {}).get('text'):
+                        await client_send({'type': 'tutor_text', 'text': content['outputTranscription']['text']})
+                    if content.get('turnComplete'):
+                        add_turn()
+                        await client_send({'type': 'turn_end'})
+        except (websockets.ConnectionClosed, OSError) as exc:
+            log.info('Gemini Live connection dropped: %s', exc)
         finally:
-            up.cancel()
-            down.cancel()
-            add_turn()
+            state['gemini'] = None
+        return ready
+
+    up = asyncio.ensure_future(browser_to_gemini())
+    failures, resuming = 0, False
+    try:
+        while True:
+            down = asyncio.ensure_future(connection(resuming))
+            await asyncio.wait({up, down}, return_when=asyncio.FIRST_COMPLETED)
+            if up.done():                      # the student left
+                down.cancel()
+                break
+            failures = 0 if down.result() else failures + 1
+            if not state['handle'] or failures >= MAX_RECONNECT_FAILURES:
+                break                          # nothing to resume from, or Gemini keeps refusing
+            resuming = True
+    finally:
+        up.cancel()
+        add_turn()

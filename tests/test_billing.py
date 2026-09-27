@@ -3,6 +3,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import time
 import types
 from app import billing, live, main, store
 from tests.test_tutor import seed_course
@@ -63,9 +64,31 @@ def test_unused_reserved_time_is_refunded(admin, client_user, monkeypatch):
     enable_live(monkeypatch, session_seconds=0)
     c, _ = client_user
     msgs = talk(c, job_id)
-    assert msgs[0]['session_seconds'] == live.MAX_SECONDS
-    assert msgs[-1]['reason'] == 'done' and 598 <= msgs[-1]['balance'] < 600
-    assert 598 <= billing.balance('student1') < 600
+    assert msgs[0]['session_seconds'] == 600 and msgs[0]['balance'] == 600
+    assert msgs[-1]['reason'] == 'done' and 598 <= msgs[-1]['balance'] <= 600
+    assert 598 <= billing.balance('student1') <= 600
+
+
+def test_long_session_is_charged_block_by_block(admin, client_user, monkeypatch):
+    # No fixed per-session length any more: the talk goes on until the balance is gone.
+    job_id = seed_course()
+    enable_live(monkeypatch)
+    monkeypatch.setattr(live, 'BILLING_BLOCK', 1)
+    set_seconds('student1', 3)
+    c, _ = client_user
+    started = time.monotonic()
+    msgs = talk(c, job_id)
+    assert 2.5 <= time.monotonic() - started < 6
+    assert msgs[-1] == {'type': 'end', 'reason': 'credit', 'balance': 0}
+
+
+def test_session_safety_cap(admin, client_user, monkeypatch):
+    job_id = seed_course()
+    enable_live(monkeypatch)
+    monkeypatch.setattr(live, 'MAX_SECONDS', 1)
+    c, _ = client_user
+    msgs = talk(c, job_id)
+    assert msgs[-1]['reason'] == 'session' and 598 <= msgs[-1]['balance'] < 600
 
 
 def test_admin_live_is_unlimited_and_can_grant(admin, client_user, monkeypatch):

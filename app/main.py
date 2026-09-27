@@ -3,6 +3,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -19,6 +20,7 @@ from app import languages as lang
 
 PUBLIC_ORIGIN = os.getenv('PUBLIC_ORIGIN', '').rstrip('/')
 STATIC = Path(__file__).parent / 'static'
+log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -587,15 +589,18 @@ async def live_ws(ws: WebSocket, job_id: str):
     if page is None:
         await ws.send_json({'type': 'error', 'detail': 'That page is not part of this course.'})
         return
-    # Live talk time is prepaid: reserve this session's seconds now, refund the unused part.
+    # Live talk time is prepaid and charged ahead one block at a time while the student talks;
+    # the session ends when a block can no longer be paid for. Unused seconds are refunded.
     admin = user['role'] == 'admin'
-    granted = live.MAX_SECONDS if admin else billing.reserve(user['username'], live.MAX_SECONDS)
-    if granted <= 0:
+    reserved = 0 if admin else billing.reserve(user['username'], live.BILLING_BLOCK)
+    if not admin and reserved <= 0:
         await ws.send_json({'type': 'no_credit', 'detail': 'Your Live voice minutes are used up.'})
         await ws.close()
         return
-    await ws.send_json({'type': 'credit', 'unlimited': admin, 'session_seconds': granted,
-                        'balance': None if admin else billing.balance(user['username']) + granted})
+    balance = None if admin else billing.balance(user['username']) + reserved
+    await ws.send_json({'type': 'credit', 'unlimited': admin,
+                        'session_seconds': live.MAX_SECONDS if admin else min(live.MAX_SECONDS, balance),
+                        'balance': balance})
 
     async def messages():
         try:
@@ -605,20 +610,39 @@ async def live_ws(ws: WebSocket, job_id: str):
             return
 
     usage, started, reason = {}, time.monotonic(), 'done'
+
+    async def meter():
+        # Returns (ending the session) when the student's balance cannot cover the next block.
+        nonlocal reserved
+        while True:
+            await asyncio.sleep(max(0.0, started + reserved - time.monotonic()))
+            more = billing.reserve(user['username'], live.BILLING_BLOCK)
+            if more <= 0:
+                return
+            reserved += more
+
+    talk = asyncio.ensure_future(live.proxy(
+        ws.send_json, messages(), job.get('title') or 'this course', page, usage,
+        lang.for_course(job.get('source_lang'), job.get('target_lang'), job.get('languages'))))
+    billing_task = None if admin else asyncio.ensure_future(meter())
     try:
-        await asyncio.wait_for(
-            live.proxy(ws.send_json, messages(), job.get('title') or 'this course', page, usage,
-                       lang.for_course(job.get('source_lang'), job.get('target_lang'), job.get('languages'))),
-            timeout=granted)
-    except asyncio.TimeoutError:
-        reason = 'session' if admin or granted >= live.MAX_SECONDS else 'credit'
-    except (WebSocketDisconnect, Exception):
-        pass
+        done, _ = await asyncio.wait({t for t in (talk, billing_task) if t}, timeout=live.MAX_SECONDS,
+                                     return_when=asyncio.FIRST_COMPLETED)
+        if not done:
+            reason = 'session'
+        elif billing_task in done:
+            reason = 'credit'
+        elif not talk.cancelled() and talk.exception():
+            log.warning('Live session failed: %r', talk.exception())
     finally:
-        used = min(granted, math.ceil(time.monotonic() - started))
+        for task in (talk, billing_task):
+            if task:
+                task.cancel()
+        elapsed = math.ceil(time.monotonic() - started)
+        used = elapsed if admin else min(reserved, elapsed)
         remaining = None
         if not admin:
-            billing.grant(user['username'], granted - used)
+            billing.grant(user['username'], reserved - used)
             remaining = billing.balance(user['username'])
             if remaining <= 0:
                 reason = 'credit'
