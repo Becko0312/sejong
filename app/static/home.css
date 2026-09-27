@@ -75,6 +75,29 @@ h1,h2{font-family:Georgia,serif;font-weight:400;letter-spacing:-.5px}
 .course-row .danger{background:transparent;border:1px solid #e2c9bf;color:#a1583f}
 .course-row progress{width:100%;height:5px;accent-color:#426b49;margin-top:10px}
 
+/* Summary pages: lesson page-number plan */
+.plan-dialog{border:1px solid #dfe5da;border-radius:14px;padding:0;width:min(760px,calc(100vw - 32px));max-height:calc(100vh - 48px);color:#263e35;box-shadow:0 20px 60px rgba(30,50,40,.25)}
+.plan-dialog::backdrop{background:rgba(30,45,38,.35)}
+.plan-dialog form{display:flex;flex-direction:column;padding:22px 24px;gap:10px}
+.plan-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.plan-head h2{font-size:18px;margin:0;overflow-wrap:anywhere}
+.plan-help{font-size:12px;line-height:1.6;color:#5c6a5c;margin:0}
+.plan-hint{font-size:11px;color:#7a8577;margin:0}
+.plan-offset{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.plan-offset label{font-size:12px;font-weight:600;color:#4a5a4f}
+.plan-dialog input{border:1px solid #d3ddcc;border-radius:6px;padding:7px 8px;font:inherit;font-size:13px;color:#28382f;background:#fbfcf9;width:100%}
+.plan-offset input{width:90px}
+.plan-table-wrap{overflow:auto;max-height:46vh;border:1px solid #e3e8df;border-radius:8px}
+.plan-table{width:100%;border-collapse:collapse;font-size:12px}
+.plan-table th{position:sticky;top:0;background:#f1f4ee;text-align:left;font-weight:600;color:#4a5a4f;padding:7px 6px}
+.plan-table td{padding:4px 6px;border-top:1px solid #edf0ea}
+.plan-table td:nth-child(1){width:64px}.plan-table td:nth-child(3),.plan-table td:nth-child(4){width:84px}
+.plan-table .p-pdf{white-space:nowrap;color:#6d7b6b;width:80px}
+.plan-table .p-pdf.bad{color:#a5462f;font-weight:600}
+.p-del{background:transparent;color:#a1583f;padding:4px 8px;font-size:12px}
+#plan-add{align-self:flex-start}
+.plan-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+
 @media(max-width:860px){#auth-view{grid-template-columns:1fr;gap:24px}.hero h1{font-size:32px}.admin-grid{grid-template-columns:1fr}}
 
 [hidden]{display:none!important}

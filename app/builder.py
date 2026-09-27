@@ -96,30 +96,186 @@ def detect_lessons(pages):
     return lessons, language
 
 
-def build_course(manifest):
-    """A reader-ready course structure derived from a conversion manifest."""
+def build_course(manifest, plan=None):
+    """A reader-ready course structure derived from a conversion manifest.
+
+    An admin-saved lesson plan (see validate_plan) replaces the automatic detection."""
     pages = manifest.get('pages', [])
     lessons, language = detect_lessons(pages)
-    by_start = {lesson['start_page']: lesson['index'] for lesson in lessons}
-    current = None
+    if plan:
+        lessons = plan_lessons(plan)
     light_pages = []
     for page in pages:
         number = page.get('number')
-        if number in by_start:
-            current = by_start[number]
+        current = next((l['index'] for l in lessons if l['start_page'] <= number <= l['end_page']), None)
         light_pages.append({
             'number': number,
             'text': page.get('text', ''),
             'text_source': page.get('text_source', 'none'),
             'needs_ocr': page.get('needs_ocr', False),
             'needs_review': page.get('needs_review', False),
-            'lesson': current if lessons else None,
+            'lesson': current,
         })
+    first = lessons[0]['start_page'] if lessons else None
     return {
         'title': manifest.get('title', 'Course'),
         'page_count': manifest.get('page_count', len(pages)),
         'language': language,
         'lessons': lessons,
-        'front_pages': [p['number'] for p in light_pages if p['lesson'] is None] if lessons else [],
+        'front_pages': [p['number'] for p in light_pages if p['lesson'] is None and p['number'] < first] if lessons else [],
+        'other_pages': [p['number'] for p in light_pages if p['lesson'] is None and p['number'] > first] if lessons else [],
         'pages': light_pages,
     }
+
+
+# ---- Admin lesson plan: printed page ranges typed from the book's contents page ----
+# Printed page numbers (what the contents page says) differ from PDF page numbers by a
+# fixed offset (cover and front matter), so the plan stores printed numbers + one offset.
+MAX_PLAN_LESSONS = 100
+_TOC_PAGE = re.compile(r'\s(\d{1,4})(?=\s|$)')
+
+
+def _squash(text):
+    return re.sub(r'\s+', '', text or '')
+
+
+_REVIEW_RANGE = re.compile(r'\([^()]*~[^()]*\)')     # "(1과~5과)": a review unit, not a lesson
+
+
+def _useful_title(title):
+    """OCR sometimes leaves only digits or brackets where a garbled title was."""
+    return title if title and len(re.sub(r'[\W\d_]', '', title)) >= 2 else None
+
+
+def _page_entries(text):
+    """(lesson number, title, printed page) pairs listed on one page, in reading order."""
+    text = _REVIEW_RANGE.sub(' ', text)
+    found = sorted(_markers(text), key=lambda m: m[1])
+    entries = []
+    for i, (number, _, end, _lang) in enumerate(found):
+        stop = found[i + 1][1] if i + 1 < len(found) else len(text)
+        segment = text[end:stop]
+        printed = _TOC_PAGE.search(' ' + segment)
+        if printed:
+            entries.append((number, _useful_title(_clean_title(segment)), int(printed.group(1))))
+    return entries
+
+
+def _fits(known, number, printed):
+    """True when a lesson's printed page keeps the plan in book order."""
+    if number in known:
+        return False
+    before = [p for n, (_, p) in known.items() if n < number]
+    after = [p for n, (_, p) in known.items() if n > number]
+    return (not before or printed > max(before)) and (not after or printed < min(after))
+
+
+def _toc_entries(pages):
+    """(lesson number, title, printed start page) merged from the contents pages.
+
+    The densest contents page is trusted first; entries from other pages (a
+    contents page often continues on the next one, and course overviews list
+    lesson numbers too) are only kept when they fit its page order."""
+    per_page = [_page_entries(page.get('text') or '') for page in pages]
+    per_page = sorted((e for e in per_page if len(e) >= 3), key=len, reverse=True)
+    known = {}
+    for entries in per_page:
+        for number, title, printed in entries:
+            if _fits(known, number, printed):
+                known[number] = (title, printed)
+    return [(n, *known[n]) for n in sorted(known)]
+
+
+def _guess_offset(pages, entries):
+    """PDF page minus printed page, found by locating the first lesson's title page."""
+    if not entries:
+        return 0
+    _, title, printed = entries[0]
+    key = _squash(title)[:6]
+    # The lesson itself comes after the contents page that lists it (course overviews
+    # before the contents page repeat the titles too).
+    contents = [p['number'] for p in pages if len(_page_entries(p.get('text') or '')) >= 3]
+    after = min(contents, default=0)
+    if key:
+        for page in pages:
+            delta = page['number'] - printed
+            if page['number'] > after and -5 <= delta <= 30 and key in _squash(page.get('text'))[:120]:
+                return delta
+    return 0
+
+
+def suggest_plan(pages):
+    """A best-effort lesson plan from the contents page, for the admin to correct.
+
+    Lessons the OCR garbled are interpolated between their neighbours (textbook
+    lessons are usually the same length); lessons after the last readable entry
+    are left for the admin to add."""
+    entries = _toc_entries(pages)
+    offset = _guess_offset(pages, entries)
+    known = {n: (t, p) for n, t, p in entries}
+    lessons = []
+    if entries:
+        for number in range(entries[0][0], entries[-1][0] + 1):
+            if number in known:
+                title, start = known[number]
+            else:
+                before = max(n for n in known if n < number)
+                after = min(n for n in known if n > number)
+                span = (known[after][1] - known[before][1]) / (after - before)
+                title, start = None, round(known[before][1] + span * (number - before))
+            lessons.append({'index': number, 'title': title or f'Lesson {number}', 'start': start})
+    last_printed = (pages[-1]['number'] if pages else 0) - offset
+    lengths = [b['start'] - a['start'] for a, b in zip(lessons, lessons[1:])]
+    typical = sorted(lengths)[len(lengths) // 2] if lengths else 10
+    for i, lesson in enumerate(lessons):
+        nxt = lessons[i + 1]['start'] - 1 if i + 1 < len(lessons) else lesson['start'] + typical - 1
+        lesson['end'] = max(lesson['start'], min(nxt, last_printed))
+    return {'offset': offset, 'lessons': lessons}
+
+
+class PlanError(ValueError):
+    pass
+
+
+def validate_plan(plan, page_count):
+    """Normalize an admin-submitted plan; raises PlanError with a readable message."""
+    try:
+        offset = int(plan.get('offset', 0))
+        rows = list(plan.get('lessons') or [])
+    except (TypeError, ValueError, AttributeError):
+        raise PlanError('The lesson plan is malformed.')
+    if not -50 <= offset <= 500:
+        raise PlanError('The page offset must be between -50 and 500.')
+    if not rows:
+        raise PlanError('Add at least one lesson.')
+    if len(rows) > MAX_PLAN_LESSONS:
+        raise PlanError(f'A course can have at most {MAX_PLAN_LESSONS} lessons.')
+    lessons, seen, last_end = [], set(), None
+    for row in rows:
+        try:
+            index, start, end = int(row['index']), int(row['start']), int(row['end'])
+        except (TypeError, ValueError, KeyError):
+            raise PlanError('Every lesson needs a number, a first page and a last page.')
+        label = f'Lesson {index}'
+        if index < 1 or index > 999 or index in seen:
+            raise PlanError(f'{label}: lesson numbers must be unique and between 1 and 999.')
+        if start > end:
+            raise PlanError(f'{label}: the first page is after the last page.')
+        if start + offset < 1 or end + offset > page_count:
+            raise PlanError(f'{label}: pages {start}–{end} fall outside the book '
+                            f'(printed pages {1 - offset}–{page_count - offset} with offset {offset}).')
+        if last_end is not None and start <= last_end:
+            raise PlanError(f'{label}: its pages overlap the previous lesson. List lessons in book order.')
+        seen.add(index)
+        last_end = end
+        title = str(row.get('title') or '').strip()[:MAX_TITLE * 2] or label
+        lessons.append({'index': index, 'title': title, 'start': start, 'end': end})
+    return {'offset': offset, 'lessons': lessons}
+
+
+def plan_lessons(plan):
+    """A validated plan as reader lessons addressed by PDF page number."""
+    offset = plan['offset']
+    return [{'index': l['index'], 'title': l['title'], 'start_page': l['start'] + offset,
+             'end_page': l['end'] + offset, 'printed_start': l['start'], 'printed_end': l['end']}
+            for l in plan['lessons']]

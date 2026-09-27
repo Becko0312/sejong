@@ -64,5 +64,33 @@
     </div>
   </section>
 </main>
+
+<dialog id="plan-dialog" class="plan-dialog" aria-labelledby="plan-title">
+  <form id="plan-form" method="dialog">
+    <div class="plan-head">
+      <h2 id="plan-title">Summary pages · lesson page numbers</h2>
+      <button type="button" class="ghost" id="plan-close" aria-label="Close">✕</button>
+    </div>
+    <p class="plan-help">Type each lesson's <strong>first and last page as printed in the book</strong> (from the contents page, e.g. 1과 → 21). The app has filled in what it could read — check every row. The offset converts printed page numbers into PDF pages.</p>
+    <div class="plan-offset">
+      <label for="plan-offset">Offset</label>
+      <input id="plan-offset" type="number" min="-50" max="500" step="1" required>
+      <span id="plan-offset-hint" class="plan-hint"></span>
+    </div>
+    <div class="plan-table-wrap">
+      <table class="plan-table">
+        <thead><tr><th>Lesson</th><th>Title</th><th>First page</th><th>Last page</th><th>PDF pages</th><th></th></tr></thead>
+        <tbody id="plan-rows"></tbody>
+      </table>
+    </div>
+    <button type="button" class="ghost" id="plan-add">+ Add lesson</button>
+    <p id="plan-estimate" class="plan-hint"></p>
+    <p id="plan-msg" class="msg" role="status" aria-live="polite"></p>
+    <div class="plan-actions">
+      <button type="button" class="ghost" id="plan-save">Save page numbers</button>
+      <button type="button" id="plan-build">Save &amp; build summaries + tests</button>
+    </div>
+  </form>
+</dialog>
 <script src="/static/app.js"></script>
 </body></html>

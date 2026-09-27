@@ -59,6 +59,7 @@ def initialize():
             if 'live_seconds' not in {r['name'] for r in db.execute('PRAGMA table_info(users)')}:
                 db.execute(f'ALTER TABLE users ADD COLUMN live_seconds INTEGER DEFAULT {LIVE_FREE_SECONDS}')
             db.execute('CREATE TABLE IF NOT EXISTS paylink_invoices (invid TEXT PRIMARY KEY, username TEXT, amount INTEGER, seconds INTEGER, status TEXT, created REAL, paid REAL)')
+            db.execute('CREATE TABLE IF NOT EXISTS test_scores (username TEXT, job_id TEXT, lesson INTEGER, best INTEGER, last INTEGER, total INTEGER, attempts INTEGER, updated REAL, PRIMARY KEY(username, job_id, lesson))')
             db.execute('CREATE TABLE IF NOT EXISTS live_sessions (username TEXT, seconds REAL, prompt_tokens INTEGER, response_tokens INTEGER, created REAL)')
 
 

@@ -20,8 +20,10 @@
       <span id="lesson-label" class="lesson-label"></span>
       <span class="spacer"></span>
       <span class="view-switch" id="view-switch" role="group" aria-label="Page view" hidden>
-        <button type="button" id="view-scan" class="vs-btn current">📄 Book</button>
+        <button type="button" id="view-scan" class="vs-btn">📄 Book</button>
         <button type="button" id="view-interactive" class="vs-btn">✨ Interactive</button>
+        <button type="button" id="view-summary" class="vs-btn current">📝 Summary</button>
+        <button type="button" id="view-test" class="vs-btn">✅ Test</button>
       </span>
       <button id="tutor-toggle" class="tutor-toggle" aria-expanded="true">◉ Tutor</button>
     </header>
@@ -38,6 +40,7 @@
     <div class="stage" id="stage" hidden>
       <div class="page-frame" id="page-frame"><img id="page-image" alt=""></div>
       <div class="interactive" id="interactive" hidden></div>
+      <div class="interactive lesson-view" id="lesson-view" hidden></div>
       <details class="page-text" id="page-text-box"><summary>Page text</summary><p id="page-flag" class="flag"></p><pre id="page-text"></pre></details>
     </div>
     <div class="zoom-ctl" id="zoom-ctl" role="group" aria-label="Page zoom">

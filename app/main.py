@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import math
-from app import auth, billing, builder, enrich, live, store, tts, tutor
+from app import auth, billing, builder, enrich, live, store, summary, tts, tutor
 from app import languages as lang
 
 PUBLIC_ORIGIN = os.getenv('PUBLIC_ORIGIN', '').rstrip('/')
@@ -204,6 +204,7 @@ def admin_courses(request: Request):
                 item['enrich'] = {**enrich.estimate(manifest), 'enabled': enrich.enabled(),
                                   'built': enrich.built_count(data_dir),
                                   'status': enrich.read_status(data_dir)}
+                item['summary'] = summary_info(data_dir, manifest)
         items.append(item)
     return items
 
@@ -356,16 +357,32 @@ def read_manifest(job_id):
         raise HTTPException(404, 'Course content is not available.')
 
 
+def page_count(manifest):
+    return manifest.get('page_count') or len(manifest.get('pages', []))
+
+
+def summary_info(data_dir, manifest):
+    """Admin view of a course's lesson plan and summary build."""
+    plan = summary.load_plan(data_dir, page_count(manifest))
+    return {'enabled': summary.enabled(), 'planned': len(plan['lessons']) if plan else 0,
+            'built': len(summary.built_lessons(data_dir, plan)), 'status': summary.read_status(data_dir)}
+
+
 @app.get('/api/courses/{job_id}')
 def course_structure(job_id: str, request: Request):
-    job = viewable(job_id, current(request))
-    course = builder.build_course(read_manifest(job_id))
+    user = current(request)
+    job = viewable(job_id, user)
+    manifest = read_manifest(job_id)
+    plan = summary.load_plan(store.DATA / job_id, page_count(manifest))
+    course = builder.build_course(manifest, plan)
     course['title'] = job.get('title') or course.get('title')
     course['source_lang'] = job.get('source_lang')
     course['target_lang'] = job.get('target_lang')
     course['tutor'] = tutor.config()
     course['tts'] = tts.config()
     course['enrich'] = {**enrich.config(), 'built': enrich.built_count(store.DATA / job_id)}
+    course['summary'] = {'enabled': summary.enabled(), 'built': summary.built_lessons(store.DATA / job_id, plan),
+                         'scores': summary.best_scores(user['username'], job_id)}
     return course
 
 
@@ -419,6 +436,102 @@ def enrich_build(job_id: str, request: Request):
     if not enrich.start_batch(store.DATA / job_id, manifest):
         raise HTTPException(409, 'Interactive pages are already being built.')
     return enrich.read_status(store.DATA / job_id)
+
+
+# ---- Lesson summaries & tests: admin plans lesson pages, AI writes a summary + test per lesson ----
+
+class LessonRow(BaseModel):
+    index: int
+    title: str = Field('', max_length=200)
+    start: int
+    end: int
+
+
+class LessonPlan(BaseModel):
+    offset: int = 0
+    lessons: list[LessonRow] = Field(max_length=builder.MAX_PLAN_LESSONS)
+
+
+@app.get('/api/admin/courses/{job_id}/lessons')
+def lesson_plan(job_id: str, request: Request):
+    require_admin(request, csrf=False)
+    admin_job(job_id)
+    manifest = read_manifest(job_id)
+    data_dir = store.DATA / job_id
+    plan = summary.load_plan(data_dir, page_count(manifest))
+    saved = plan is not None
+    if not saved:
+        plan = builder.suggest_plan(manifest.get('pages', []))
+    return {'saved': saved, 'plan': plan, 'page_count': page_count(manifest),
+            'estimate': summary.estimate(manifest, plan), **summary_info(data_dir, manifest)}
+
+
+@app.put('/api/admin/courses/{job_id}/lessons')
+def save_lesson_plan(job_id: str, body: LessonPlan, request: Request):
+    require_admin(request)
+    admin_job(job_id)
+    manifest = read_manifest(job_id)
+    try:
+        plan = builder.validate_plan(body.model_dump(), page_count(manifest))
+        summary.save_plan(store.DATA / job_id, plan)
+    except builder.PlanError as exc:
+        raise HTTPException(400, str(exc))
+    except summary.SummaryError as exc:
+        raise HTTPException(409, exc.message)
+    return {'saved': True, 'plan': plan, 'estimate': summary.estimate(manifest, plan)}
+
+
+@app.post('/api/admin/courses/{job_id}/summary')
+def summary_build(job_id: str, request: Request):
+    require_admin(request)
+    job = admin_job(job_id)
+    if not summary.enabled():
+        raise HTTPException(503, 'Summary pages are not configured on this server yet.')
+    manifest = read_manifest(job_id)
+    data_dir = store.DATA / job_id
+    plan = summary.load_plan(data_dir, page_count(manifest))
+    if not plan:
+        raise HTTPException(409, 'Save the lesson page numbers first.')
+    if not summary.start_batch(data_dir, manifest, plan, job.get('source_lang') or 'Korean',
+                               job.get('target_lang') or 'Mongolian'):
+        raise HTTPException(409, 'Summary pages are already being built.')
+    return summary.read_status(data_dir)
+
+
+def built_lesson(job_id, lesson, user):
+    viewable(job_id, user)
+    data = summary.load_lesson(store.DATA / job_id, lesson)
+    if not data:
+        raise HTTPException(404, 'The summary for this lesson has not been built yet.')
+    return data
+
+
+@app.get('/api/courses/{job_id}/lessons/{lesson}/summary')
+def lesson_summary(job_id: str, lesson: int, request: Request):
+    data = built_lesson(job_id, lesson, current(request))
+    return {'lesson': data['lesson'], **data['summary']}
+
+
+@app.get('/api/courses/{job_id}/lessons/{lesson}/test')
+def lesson_test(job_id: str, lesson: int, request: Request):
+    user = current(request)
+    data = built_lesson(job_id, lesson, user)
+    return {'lesson': data['lesson'], **summary.public_test(data['test']),
+            'score': summary.best_scores(user['username'], job_id).get(lesson)}
+
+
+class TestAnswers(BaseModel):
+    answers: list[int | None] = Field(max_length=summary.MAX_QUESTIONS)
+
+
+@app.post('/api/courses/{job_id}/lessons/{lesson}/test')
+def submit_test(job_id: str, lesson: int, body: TestAnswers, request: Request):
+    user = current(request)
+    check_csrf(request, user)
+    data = built_lesson(job_id, lesson, user)
+    result = summary.grade(data['test'], body.answers)
+    result['score_record'] = summary.record_score(user['username'], job_id, lesson, result['score'], result['total'])
+    return result
 
 
 class TutorRequest(BaseModel):

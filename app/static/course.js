@@ -2,8 +2,8 @@
 // Book2Course reader: renders a converted book as a lesson-structured course + AI tutor.
 const app = document.getElementById('app');
 const jobId = decodeURIComponent(location.pathname.replace(/^\/course\//, '').replace(/\/$/, ''));
-const API = { course: `/api/courses/${jobId}`, image: (n) => `/books/${jobId}/page-${n}.png`, tutor: `/api/tutor/${jobId}`, tts: '/api/tts', interactive: (n) => `/api/courses/${jobId}/pages/${n}/interactive` };
-const state = { csrf: '', role: '', tutor: { enabled: false }, tts: { enabled: false }, enrich: { enabled: false }, view: 'scan', viewLoad: 0, course: null, pages: [], lessons: [], title: '', current: 0, history: [], busy: false, taught: new Set() };
+const API = { course: `/api/courses/${jobId}`, image: (n) => `/books/${jobId}/page-${n}.png`, tutor: `/api/tutor/${jobId}`, tts: '/api/tts', interactive: (n) => `/api/courses/${jobId}/pages/${n}/interactive`, summary: (l) => `/api/courses/${jobId}/lessons/${l}/summary`, test: (l) => `/api/courses/${jobId}/lessons/${l}/test` };
+const state = { csrf: '', role: '', tutor: { enabled: false }, tts: { enabled: false }, enrich: { enabled: false }, summary: { enabled: false, built: [], scores: {} }, lessonCache: {}, view: 'summary', viewPicked: false, viewLoad: 0, course: null, pages: [], lessons: [], title: '', current: 0, history: [], busy: false, taught: new Set() };
 const MODE_LABELS = { intro: 'Start teaching this page', explain: '📖 Explain this page', vocab: '🔤 Teach the vocabulary', quiz: '✍️ Quiz me on this page', practice: '🗣️ Practice speaking' };
 
 const el = {
@@ -14,6 +14,8 @@ const el = {
   frame: document.getElementById('page-frame'), textBox: document.getElementById('page-text-box'),
   interactive: document.getElementById('interactive'), viewSwitch: document.getElementById('view-switch'),
   viewScan: document.getElementById('view-scan'), viewInteractive: document.getElementById('view-interactive'),
+  viewSummary: document.getElementById('view-summary'), viewTest: document.getElementById('view-test'),
+  lessonView: document.getElementById('lesson-view'),
   flag: document.getElementById('page-flag'), prev: document.getElementById('prev'), next: document.getElementById('next'),
   homeBtn: document.getElementById('home-btn'), home: document.getElementById('home'), stage: document.getElementById('stage'),
   homeTitle: document.getElementById('home-title'), homeMeta: document.getElementById('home-meta'),
@@ -50,9 +52,14 @@ async function boot() {
     state.tutor = course.tutor || session.tutor || { enabled: false };
     state.tts = course.tts || { enabled: false };
     state.enrich = course.enrich || { enabled: false };
+    state.summary = { enabled: false, built: [], scores: {}, ...(course.summary || {}) };
     state.role = account.role;
-    // The switch appears once interactive pages exist, or for admins who can build them.
-    el.viewSwitch.hidden = !(state.enrich.enabled && ((state.enrich.built || 0) > 0 || account.role === 'admin'));
+    // Each AI view appears once it has been built (admins see Interactive early: they can build pages on demand).
+    const hasInteractive = state.enrich.enabled && ((state.enrich.built || 0) > 0 || account.role === 'admin');
+    const hasSummary = state.summary.built.length > 0;
+    el.viewInteractive.hidden = !hasInteractive;
+    el.viewSummary.hidden = el.viewTest.hidden = !hasSummary;
+    el.viewSwitch.hidden = !(hasInteractive || hasSummary);
     if (!state.pages.length) throw new Error('This course has no pages.');
     el.title.textContent = state.title;
     const langBit = course.language ? `${LANG[course.language] || course.language} · ` : '';
@@ -107,6 +114,8 @@ function buildToc() {
     for (let n = lesson.start_page; n <= lesson.end_page; n++) pages.push(n);
     el.tocList.appendChild(pageGroup(`${lesson.index}. ${lesson.title || 'Lesson ' + lesson.index}`, pages, lesson.index));
   }
+  const other = (state.course.other_pages || []);
+  if (other.length) el.tocList.appendChild(pageGroup('Other pages', other));
 }
 
 function pageGroup(label, pageNumbers, lessonIndex) {
@@ -451,20 +460,26 @@ async function speak(text) {
 }
 
 
-/* ---------- Interactive page view ---------- */
+/* ---------- Page views: Book · Interactive · Summary · Test ---------- */
+const VIEWS = { scan: 'viewScan', interactive: 'viewInteractive', summary: 'viewSummary', test: 'viewTest' };
+
 function applyView() {
-  const interactive = state.view === 'interactive' && state.enrich.enabled;
-  el.viewScan.classList.toggle('current', !interactive);
-  el.viewInteractive.classList.toggle('current', interactive);
-  el.frame.hidden = interactive;
-  el.textBox.hidden = interactive;
-  el.interactive.hidden = !interactive;
-  el.zoomCtl.hidden = interactive;
-  if (interactive && state.current) loadInteractive(state.current);
+  if (el[VIEWS[state.view]].hidden) state.view = 'scan';
+  // Summary is the default tab; until the student picks a tab, pages whose lesson has no summary yet open in Book.
+  const lesson = state.current && currentLesson();
+  const noSummary = !lesson || !state.summary.built.includes(lesson.index);
+  const view = !state.viewPicked && state.view === 'summary' && noSummary ? 'scan' : state.view;
+  for (const [name, key] of Object.entries(VIEWS)) el[key].classList.toggle('current', name === view);
+  el.frame.hidden = el.textBox.hidden = view !== 'scan';
+  el.zoomCtl.hidden = view !== 'scan';
+  el.interactive.hidden = view !== 'interactive';
+  el.lessonView.hidden = view !== 'summary' && view !== 'test';
+  if (!state.current) return;
+  if (view === 'interactive') loadInteractive(state.current);
+  else if (view === 'summary' || view === 'test') loadLessonView(view);
 }
 
-el.viewScan.addEventListener('click', () => { state.view = 'scan'; applyView(); });
-el.viewInteractive.addEventListener('click', () => { state.view = 'interactive'; applyView(); });
+for (const name of Object.keys(VIEWS)) el[VIEWS[name]].addEventListener('click', () => { state.view = name; state.viewPicked = true; applyView(); });
 
 async function loadInteractive(number) {
   const token = ++state.viewLoad;
@@ -493,9 +508,9 @@ function ixNote(text) {
   return p;
 }
 
-function sentenceBlock(s) {
+function sentenceBlock(s, extraClass) {
   const wrap = document.createElement('div');
-  wrap.className = 'sentence';
+  wrap.className = extraClass ? `sentence ${extraClass}` : 'sentence';
   const line = document.createElement('div');
   line.className = 'sentence-ko';
   const ko = document.createElement('span');
@@ -512,7 +527,177 @@ function sentenceBlock(s) {
   wrap.appendChild(line);
   if (s.rom) { const rom = document.createElement('div'); rom.className = 'sentence-rom'; rom.textContent = s.rom; wrap.appendChild(rom); }
   if (s.tr) { const tr = document.createElement('div'); tr.className = 'sentence-tr'; tr.textContent = s.tr; wrap.appendChild(tr); }
+  if (s.note) { const note = document.createElement('div'); note.className = 'sentence-note'; note.textContent = s.note; wrap.appendChild(note); }
   return wrap;
+}
+
+/* ---------- Lesson summary & test (one per lesson, AI-built from the lesson's pages) ---------- */
+function currentLesson() {
+  const page = state.pages.find((p) => p.number === state.current);
+  return page && state.lessons.find((l) => l.index === page.lesson);
+}
+
+function lessonHeading(lesson, extra) {
+  const head = document.createElement('div');
+  head.className = 'lv-head';
+  const eyebrow = document.createElement('p');
+  eyebrow.className = 'lv-eyebrow';
+  const range = lesson.printed_start ? `book pages ${lesson.printed_start}–${lesson.printed_end}` : `pages ${lesson.start_page}–${lesson.end_page}`;
+  eyebrow.textContent = `Lesson ${lesson.index} · ${range}${extra ? ' · ' + extra : ''}`;
+  head.appendChild(eyebrow);
+  return head;
+}
+
+async function loadLessonView(view) {
+  const token = ++state.viewLoad;
+  const lesson = currentLesson();
+  const box = el.lessonView;
+  const key = lesson && `${view}-${lesson.index}`;
+  // Moving between pages of the same lesson keeps the rendered summary/test (and test answers).
+  if (lesson && box.dataset.key === key) return;
+  box.innerHTML = '';
+  box.dataset.key = '';
+  if (!lesson) { box.appendChild(ixNote('This page is not part of a lesson. Open a lesson page to see its summary and test.')); return; }
+  if (!state.summary.built.includes(lesson.index)) { box.appendChild(ixNote(`The summary and test for lesson ${lesson.index} have not been built yet.`)); return; }
+  box.appendChild(ixNote(view === 'summary' ? 'Loading the lesson summary…' : 'Loading the lesson test…'));
+  try {
+    const cacheKey = `${view}-${lesson.index}`;
+    let data = state.lessonCache[cacheKey];
+    if (!data) {
+      const res = await fetch(view === 'summary' ? API.summary(lesson.index) : API.test(lesson.index));
+      data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Could not load this lesson.');
+      state.lessonCache[cacheKey] = data;
+    }
+    if (token !== state.viewLoad || state.view !== view) return;
+    box.innerHTML = '';
+    box.dataset.key = key;
+    if (view === 'summary') renderSummary(box, lesson, data); else renderTest(box, lesson, data);
+  } catch (err) {
+    if (token !== state.viewLoad) return;
+    box.innerHTML = '';
+    box.appendChild(ixNote(err.message || 'Could not load this lesson.'));
+  }
+}
+
+function renderSummary(box, lesson, data) {
+  const head = lessonHeading(lesson, 'summary');
+  head.appendChild(sentenceBlock({ ko: data.title || lesson.title, rom: '', tr: data.title_tr }, 'lv-title'));
+  if ((data.goals || []).length) {
+    const ul = document.createElement('ul');
+    ul.className = 'lv-goals';
+    for (const g of data.goals) { const li = document.createElement('li'); li.textContent = g; ul.appendChild(li); }
+    head.appendChild(ul);
+  }
+  box.appendChild(head);
+  for (const sec of data.sections || []) {
+    const section = document.createElement('section');
+    section.className = `lv-section kind-${sec.kind}`;
+    const h = document.createElement('h3');
+    h.textContent = sec.heading;
+    section.appendChild(h);
+    if (sec.explanation) { const p = document.createElement('p'); p.className = 'lv-explain'; p.textContent = sec.explanation; section.appendChild(p); }
+    const list = document.createElement('div');
+    list.className = 'lv-items';
+    for (const item of sec.items || []) list.appendChild(sentenceBlock(item));
+    section.appendChild(list);
+    box.appendChild(section);
+  }
+  const go = document.createElement('button');
+  go.type = 'button';
+  go.className = 'lv-primary';
+  go.textContent = '✅ Take the lesson test';
+  go.addEventListener('click', () => { state.view = 'test'; state.viewPicked = true; applyView(); });
+  box.appendChild(go);
+}
+
+function scoreText(s) { return s ? `Best score ${s.best}/${s.total} · ${s.attempts} attempt${s.attempts === 1 ? '' : 's'}` : 'Not taken yet'; }
+
+function renderTest(box, lesson, data) {
+  const head = lessonHeading(lesson, 'test');
+  const title = document.createElement('h3');
+  title.className = 'lv-test-title';
+  const summaryTitle = (state.lessonCache[`summary-${lesson.index}`] || {}).title;
+  title.textContent = `${summaryTitle || lesson.title || 'Lesson ' + lesson.index} — ${data.questions.length} questions`;
+  head.appendChild(title);
+  const score = document.createElement('p');
+  score.className = 'lv-score';
+  score.textContent = scoreText(data.score);
+  head.appendChild(score);
+  box.appendChild(head);
+  const form = document.createElement('form');
+  form.className = 'lv-test';
+  data.questions.forEach((q, qi) => {
+    const fs = document.createElement('fieldset');
+    fs.className = 'lv-q';
+    const legend = document.createElement('legend');
+    legend.textContent = `${qi + 1}. ${q.q}`;
+    fs.appendChild(legend);
+    if (q.ko) fs.appendChild(sentenceBlock({ ko: q.ko, rom: q.rom, tr: '' }));
+    q.choices.forEach((c, ci) => {
+      const label = document.createElement('label');
+      label.className = 'lv-choice';
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = `q${qi}`;
+      input.value = ci;
+      label.appendChild(input);
+      const text = document.createElement('span');
+      text.textContent = c.text;
+      label.appendChild(text);
+      if (c.rom) { const rom = document.createElement('small'); rom.textContent = c.rom; label.appendChild(rom); }
+      fs.appendChild(label);
+    });
+    form.appendChild(fs);
+  });
+  const submit = document.createElement('button');
+  submit.type = 'submit';
+  submit.className = 'lv-primary';
+  submit.textContent = 'Check my answers';
+  form.appendChild(submit);
+  const result = document.createElement('p');
+  result.className = 'lv-result';
+  result.setAttribute('aria-live', 'polite');
+  form.appendChild(result);
+  form.addEventListener('submit', (e) => { e.preventDefault(); submitTest(form, lesson, data, score, result, submit); });
+  box.appendChild(form);
+}
+
+async function submitTest(form, lesson, data, scoreEl, result, submit) {
+  const answers = data.questions.map((_, qi) => {
+    const checked = form.querySelector(`input[name="q${qi}"]:checked`);
+    return checked ? Number(checked.value) : null;
+  });
+  if (answers.includes(null) && !confirm('Some questions are unanswered. Check your answers anyway?')) return;
+  submit.disabled = true;
+  try {
+    const res = await fetch(API.test(lesson.index), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': state.csrf }, body: JSON.stringify({ answers }) });
+    const graded = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(graded.detail || 'Could not check the answers.');
+    graded.results.forEach((r, qi) => {
+      const fs = form.querySelectorAll('.lv-q')[qi];
+      fs.classList.toggle('right', r.correct);
+      fs.classList.toggle('wrong', !r.correct);
+      fs.querySelectorAll('.lv-choice').forEach((label, ci) => {
+        label.classList.toggle('answer', ci === r.answer);
+        label.classList.toggle('missed', ci === r.chosen && !r.correct);
+        label.querySelector('input').disabled = true;
+      });
+      let note = fs.querySelector('.lv-why');
+      if (!note) { note = document.createElement('p'); note.className = 'lv-why'; fs.appendChild(note); }
+      note.textContent = `${r.correct ? '✓ Correct.' : '✗ Not quite.'} ${r.explain || ''}`;
+    });
+    result.textContent = `You scored ${graded.score}/${graded.total}.`;
+    data.score = graded.score_record;
+    scoreEl.textContent = scoreText(graded.score_record);
+    submit.textContent = '↻ Try again';
+    submit.disabled = false;
+    submit.type = 'button';
+    submit.onclick = () => { delete state.lessonCache[`test-${lesson.index}`]; el.lessonView.dataset.key = ''; loadLessonView('test'); };
+  } catch (err) {
+    result.textContent = err.message;
+    submit.disabled = false;
+  }
 }
 
 async function speakSentence(text) {

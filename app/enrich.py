@@ -98,6 +98,33 @@ def _parse(raw):
     return {'sentences': sentences}
 
 
+def call_gemini(prompt, max_output_tokens, failure):
+    """One JSON-mode Gemini request; returns the reply text or raises EnrichError(failure)."""
+    body = {
+        'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
+        'generationConfig': {'maxOutputTokens': max_output_tokens, 'temperature': 0.2,
+                             'responseMimeType': 'application/json'},
+    }
+    if '2.5' in GEMINI_MODEL:
+        body['generationConfig']['thinkingConfig'] = {'thinkingBudget': 0}
+    import requests
+    try:
+        response = requests.post(GEMINI_ENDPOINT.format(model=GEMINI_MODEL),
+                                 params={'key': os.getenv('GEMINI_API_KEY')}, json=body, timeout=120)
+    except requests.RequestException as exc:
+        raise EnrichError(failure) from exc
+    if response.status_code in (401, 403):
+        raise EnrichError('The AI credentials are invalid.')
+    if response.status_code == 429:
+        raise EnrichError('The AI is busy right now. Please try again in a moment.')
+    if response.status_code != 200:
+        raise EnrichError(failure)
+    data = response.json()
+    candidates = data.get('candidates') or []
+    parts = candidates[0].get('content', {}).get('parts', []) if candidates else []
+    return ''.join(p.get('text', '') for p in parts)
+
+
 def generate(page):
     """Ask Gemini to reorganize one manifest page; returns the validated JSON."""
     if not enabled():
@@ -106,29 +133,7 @@ def generate(page):
     if not text:
         raise EnrichError('This page has no extracted text to reorganize.')
     prompt = f"{SYSTEM}\n\n<page_text>\n{text}\n</page_text>"
-    body = {
-        'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
-        'generationConfig': {'maxOutputTokens': MAX_OUTPUT_TOKENS, 'temperature': 0.2,
-                             'responseMimeType': 'application/json'},
-    }
-    if '2.5' in GEMINI_MODEL:
-        body['generationConfig']['thinkingConfig'] = {'thinkingBudget': 0}
-    import requests
-    try:
-        response = requests.post(GEMINI_ENDPOINT.format(model=GEMINI_MODEL),
-                                 params={'key': os.getenv('GEMINI_API_KEY')}, json=body, timeout=60)
-    except requests.RequestException as exc:
-        raise EnrichError('The interactive page could not be built. Please try again.') from exc
-    if response.status_code in (401, 403):
-        raise EnrichError('The AI credentials are invalid.')
-    if response.status_code == 429:
-        raise EnrichError('The AI is busy right now. Please try again in a moment.')
-    if response.status_code != 200:
-        raise EnrichError('The interactive page could not be built. Please try again.')
-    data = response.json()
-    candidates = data.get('candidates') or []
-    parts = candidates[0].get('content', {}).get('parts', []) if candidates else []
-    return _parse(''.join(p.get('text', '') for p in parts))
+    return _parse(call_gemini(prompt, MAX_OUTPUT_TOKENS, 'The interactive page could not be built. Please try again.'))
 
 
 def output_path(data_dir, number):
