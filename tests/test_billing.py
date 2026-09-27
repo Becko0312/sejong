@@ -12,7 +12,7 @@ def enable_live(monkeypatch, session_seconds=None, usage=None):
     monkeypatch.setenv('TUTOR_PROVIDER', 'gemini')
     monkeypatch.setenv('GEMINI_API_KEY', 'AQ.test')
 
-    async def fake_proxy(send, messages, title, page, used):
+    async def fake_proxy(send, messages, title, page, used, course_languages=None):
         await send({'type': 'ready'})
         used.update(usage or {'prompt': 1200, 'response': 300})
         if session_seconds is None:

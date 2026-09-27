@@ -11,7 +11,9 @@ import subprocess
 import xml.etree.ElementTree as ET
 
 ENGINE = 'poppler-tesseract-v2'
-LANGUAGES = {'eng', 'kor', 'mon'}
+from app.languages import OCR_CODES
+
+LANGUAGES = set(OCR_CODES)
 
 
 def command(args, timeout=90):

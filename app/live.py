@@ -9,7 +9,7 @@ import asyncio
 import json
 import os
 import websockets
-from app import tutor
+from app import languages, tutor
 
 GEMINI_WS = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent'
 LIVE_MODEL = os.getenv('GEMINI_LIVE_MODEL', 'gemini-2.5-flash-native-audio-latest')
@@ -28,16 +28,35 @@ VOICE_STYLE = (
 )
 
 
-def system_instruction(book_title, page):
-    return tutor.SYSTEM + VOICE_STYLE + "\n\n" + tutor._page_context(book_title, page)
+def language_rules(names):
+    """Native-audio Live models cannot be locked to a language code (Google: "restrict the languages
+    ... in the system instructions"), so we name the course's languages explicitly. Without this,
+    Mongolian speech is sometimes heard as Hindi or Thai."""
+    names = names or list(languages.STUDENT_LANGUAGES)
+    listed = ', '.join(names[:-1]) + (f' or {names[-1]}' if len(names) > 1 else names[0])
+    hints = '\n'.join(f'- {languages.LANGUAGES[n]["hint"]}' for n in names if n in languages.LANGUAGES)
+    return (
+        f"\n\nLANGUAGES IN THIS SESSION: the student speaks ONLY {listed} — often mixing them in one sentence "
+        f"while practising.\n{hints}\n"
+        f"Every word you hear is in one of these languages. Never interpret the student's speech as Hindi, Thai, "
+        f"or any other language, and never answer in one. If you are unsure which language you heard, assume "
+        f"it is Mongolian, the student's native language. Reply only in {listed}: explain in the language the "
+        f"student is speaking (Mongolian by default), and say practice words in the language being studied."
+    )
 
 
-async def proxy(client_send, client_messages, book_title, page, usage=None):
+def system_instruction(book_title, page, course_languages=None):
+    return (tutor.SYSTEM + VOICE_STYLE + language_rules(course_languages) + "\n\n"
+            + tutor._page_context(book_title, page))
+
+
+async def proxy(client_send, client_messages, book_title, page, usage=None, course_languages=None):
     """Relay audio/text between a browser (client_send / client_messages) and Gemini Live.
 
     client_send(dict): coroutine sending a JSON message to the browser.
     client_messages: async iterator yielding decoded JSON dicts from the browser.
     usage: optional dict that accumulates billed tokens ('prompt'/'response') per turn.
+    course_languages: language names the student may speak (see languages.for_course).
     """
     usage = usage if usage is not None else {}
     usage.setdefault('prompt', 0)
@@ -48,7 +67,7 @@ async def proxy(client_send, client_messages, book_title, page, usage=None):
         'model': f'models/{LIVE_MODEL}',
         'generationConfig': {'responseModalities': ['AUDIO'],
                              'speechConfig': {'voiceConfig': {'prebuiltVoiceConfig': {'voiceName': VOICE}}}},
-        'systemInstruction': {'parts': [{'text': system_instruction(book_title, page)}]},
+        'systemInstruction': {'parts': [{'text': system_instruction(book_title, page, course_languages)}]},
         'realtimeInputConfig': {'automaticActivityDetection': {
             'startOfSpeechSensitivity': START_SENSITIVITY, 'prefixPaddingMs': PREFIX_PADDING_MS}},
         'inputAudioTranscription': {},

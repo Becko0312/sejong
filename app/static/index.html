@@ -46,19 +46,12 @@
           <label for="c-title">Course title</label>
           <input id="c-title" placeholder="e.g. Korean 1" required>
           <div class="row">
-            <div><label for="c-source">From language</label><input id="c-source" placeholder="Korean"></div>
-            <div><label for="c-target">To language</label><input id="c-target" placeholder="Mongolian"></div>
+            <div><label for="c-source">Language taught</label><select id="c-source" data-default="Korean" required></select></div>
+            <div><label for="c-target">Explained in</label><select id="c-target" data-default="Mongolian" required></select></div>
           </div>
           <label for="c-desc">Description <span class="opt">(optional)</span></label>
           <input id="c-desc" placeholder="Short summary shown to students">
-          <label class="check"><input id="c-ocr" type="checkbox" checked> Recognize scanned text with OCR</label>
-          <label for="c-langs">OCR languages</label>
-          <select id="c-langs">
-            <option value="kor+mon+eng">Korean + Mongolian + English</option>
-            <option value="eng">English</option>
-            <option value="kor">Korean</option>
-            <option value="mon">Mongolian</option>
-          </select>
+          <label class="check"><input id="c-ocr" type="checkbox" checked> Recognize scanned text with OCR <span class="opt">(reads both languages + English)</span></label>
           <label class="drop" id="drop"><input id="c-file" type="file" accept="application/pdf,.pdf" required><span id="c-filename">Choose a PDF textbook</span></label>
           <button id="add-submit" type="submit">Convert to course ↗</button>
           <p id="add-msg" class="msg" role="status" aria-live="polite"></p>

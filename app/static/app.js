@@ -29,7 +29,7 @@ function render() {
   if (me && me.authenticated) {
     box.innerHTML = `<span class="role">${escape(me.role)}</span><span>${escape(me.username)}</span><button class="ghost" id="logout">Log out</button>`;
     $('#logout').addEventListener('click', logout);
-    if (me.role === 'admin') { show('admin-view'); loadAdmin(); } else { show('client-view'); loadCatalog(); }
+    if (me.role === 'admin') { show('admin-view'); fillLanguages(); loadAdmin(); } else { show('client-view'); loadCatalog(); }
   } else {
     box.innerHTML = '';
     show('auth-view');
@@ -64,6 +64,14 @@ $('#auth-form').addEventListener('submit', async (e) => {
   finally { $('#auth-submit').disabled = false; }
 });
 
+// Course languages come from the server's supported list (see app/languages.py).
+function fillLanguages() {
+  for (const sel of [$('#c-source'), $('#c-target')]) {
+    if (sel.options.length) continue;
+    for (const name of me.languages || []) { const d = name === sel.dataset.default; sel.add(new Option(name, name, d, d)); }
+  }
+}
+
 async function logout() { try { await api('/api/logout', { method: 'POST' }); } catch {} me = null; await boot(); }
 
 /* ---------- Client catalog ---------- */
@@ -90,9 +98,9 @@ $('#add-form').addEventListener('submit', (e) => {
   e.preventDefault();
   if (!chosenFile || !me) return;
   const params = new URLSearchParams({
-    name: chosenFile.name, ocr: $('#c-ocr').checked, languages: $('#c-langs').value,
-    title: $('#c-title').value.trim(), source_lang: $('#c-source').value.trim(),
-    target_lang: $('#c-target').value.trim(), description: $('#c-desc').value.trim(),
+    name: chosenFile.name, ocr: $('#c-ocr').checked,
+    title: $('#c-title').value.trim(), source_lang: $('#c-source').value,
+    target_lang: $('#c-target').value, description: $('#c-desc').value.trim(),
   });
   const req = new XMLHttpRequest();
   req.open('POST', `/api/jobs?${params}`);

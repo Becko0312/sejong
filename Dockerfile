@@ -19,6 +19,7 @@ FROM base AS worker
 USER root
 RUN apt-get update && apt-get install --no-install-recommends -y \
     libseccomp2 poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-kor tesseract-ocr-mon \
+    tesseract-ocr-jpn tesseract-ocr-chi-sim tesseract-ocr-rus \
     && rm -rf /var/lib/apt/lists/*
 RUN dpkg-query -W -f='${binary:Package}\t${source:Package}\t${source:Version}\n' > /usr/share/sejong/debian-packages.tsv
 COPY app ./app

@@ -15,10 +15,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import math
 from app import auth, billing, builder, enrich, live, store, tts, tutor
+from app import languages as lang
 
 PUBLIC_ORIGIN = os.getenv('PUBLIC_ORIGIN', '').rstrip('/')
 STATIC = Path(__file__).parent / 'static'
-OCR_LANGUAGES = {'eng', 'kor', 'mon', 'kor+mon+eng'}
 
 
 @asynccontextmanager
@@ -88,7 +88,7 @@ def require_admin(request, csrf=True):
 def account(user):
     return {'authenticated': True, 'username': user['username'], 'role': user['role'],
             'csrf': hashlib.sha256(user['token'].encode()).hexdigest() if 'token' in user else user['csrf'],
-            'tutor': tutor.config(), 'tts': tts.config()}
+            'tutor': tutor.config(), 'tts': tts.config(), 'languages': list(lang.LANGUAGES)}
 
 
 def set_cookie(response, token):
@@ -231,7 +231,11 @@ def admin_job(job_id):
 async def upload(request: Request, name: str = 'document.pdf', ocr: bool = False, languages: str = 'eng',
                  source_lang: str = '', target_lang: str = '', title: str = '', description: str = ''):
     admin = require_admin(request)
-    if languages not in OCR_LANGUAGES:
+    source_lang, target_lang = course_language(source_lang), course_language(target_lang)
+    if source_lang or target_lang:
+        # OCR reads exactly the course's language pair (plus English, which textbooks mix in).
+        languages = lang.ocr_for(target_lang, source_lang)
+    elif not set(languages.split('+')) <= set(lang.OCR_CODES):
         raise HTTPException(400, 'Unsupported OCR languages.')
     if request.headers.get('content-type', '').split(';')[0] != 'application/pdf':
         raise HTTPException(415, 'Send a PDF as the request body.')
@@ -286,11 +290,22 @@ class CourseUpdate(BaseModel):
     description: str | None = Field(None, max_length=1000)
 
 
+def course_language(value):
+    # Courses may only use the supported languages, so OCR and the Live tutor know them.
+    if not (value or '').strip():
+        return ''
+    name = lang.normalize(value)
+    if not name:
+        raise HTTPException(400, f"Unsupported language. Choose one of: {', '.join(lang.LANGUAGES)}.")
+    return name
+
+
 @app.patch('/api/jobs/{job_id}')
 def edit_course(job_id: str, body: CourseUpdate, request: Request):
     require_admin(request)
     admin_job(job_id)
-    fields = {k: (int(v) if k == 'available' else v) for k, v in body.model_dump(exclude_none=True).items()}
+    fields = {k: (int(v) if k == 'available' else course_language(v) or None if k in ('source_lang', 'target_lang') else v)
+              for k, v in body.model_dump(exclude_none=True).items()}
     if fields:
         store.update(job_id, **fields)
     return catalog_item(admin_job(job_id))
@@ -479,7 +494,8 @@ async def live_ws(ws: WebSocket, job_id: str):
     usage, started, reason = {}, time.monotonic(), 'done'
     try:
         await asyncio.wait_for(
-            live.proxy(ws.send_json, messages(), job.get('title') or 'this course', page, usage),
+            live.proxy(ws.send_json, messages(), job.get('title') or 'this course', page, usage,
+                       lang.for_course(job.get('source_lang'), job.get('target_lang'), job.get('languages'))),
             timeout=granted)
     except asyncio.TimeoutError:
         reason = 'session' if admin or granted >= live.MAX_SECONDS else 'credit'
