@@ -148,12 +148,14 @@ button:disabled{opacity:.5;cursor:default}
 
 /* Split-screen live voice: TOC on the left, voice UI in the middle, book on the right */
 @media(min-width:820px){
-  #app.live-active{grid-template-columns:220px 360px 1fr}
+  #app.live-active{grid-template-columns:190px 260px 1fr}
   #app.live-active .tutor{display:none}
   #app.live-active .voice-overlay{position:static;inset:auto;z-index:auto;height:100vh;grid-column:2}
   #app.live-active .reader{grid-column:3;min-width:0}
-  #app.live-active .voice-inner{max-height:100vh;overflow-y:auto;padding:24px 18px}
+  #app.live-active .voice-inner{max-height:100vh;overflow-y:auto;padding:22px 14px;max-width:100%}
+  #app.live-active .orb{width:120px;height:120px}
+  #app.live-active .orb-icon{font-size:42px}
 }
 @media(min-width:820px) and (max-width:1080px){
-  #app.live-active{grid-template-columns:180px 300px 1fr}
+  #app.live-active{grid-template-columns:160px 220px 1fr}
 }
