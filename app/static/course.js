@@ -623,7 +623,7 @@ async function startLive() {
     live.ws.onopen = () => live.ws.send(JSON.stringify({ type: 'start', page: state.current || 1 }));
     live.ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (m.type === 'ready') vStatus('Listening — go ahead', 'listening');
+      if (m.type === 'ready') vStatus('Tutor is starting the lesson…');
       else if (m.type === 'credit') startTimer(m);
       else if (m.type === 'no_credit') { stopLive(); setBalance(0); minutesUsedUp(); }
       else if (m.type === 'audio') { const pcm = b64ToInt16(m.data); const f = new Float32Array(pcm.length); for (let i = 0; i < pcm.length; i++) f[i] = pcm[i] / 32768; live.playNode.port.postMessage(f); }

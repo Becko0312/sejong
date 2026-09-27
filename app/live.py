@@ -27,6 +27,15 @@ VOICE_STYLE = (
     "meaning in their language. Do not read long lists aloud; invite the student to speak and practice."
 )
 
+# The tutor speaks first: as soon as Gemini is ready we send this hidden kickoff turn.
+GREETING = 'Сайн байна уу? Өнөөдрийн хичээлээ эхэлцгээе, энэ хуудас нь {topic} сэдвийн тухай бичигдсэн байна.'
+KICKOFF = (
+    "[The student just opened live voice mode. Start the lesson now, speaking Mongolian. Open with exactly this "
+    "sentence, replacing {topic} with a short Mongolian name for the topic of the current page (read it from the "
+    "lesson title and page text): \"" + GREETING + "\" Then, in one short sentence, invite the student to begin — "
+    "for example with the page's first word or phrase.]"
+)
+
 
 def language_rules(names):
     """Native-audio Live models cannot be locked to a language code (Google: "restrict the languages
@@ -99,6 +108,8 @@ async def proxy(client_send, client_messages, book_title, page, usage=None, cour
                     turn.update(data['usageMetadata'])
                 if 'setupComplete' in data:
                     await client_send({'type': 'ready'})
+                    await gemini.send(json.dumps({'clientContent': {
+                        'turns': [{'role': 'user', 'parts': [{'text': KICKOFF}]}], 'turnComplete': True}}))
                     continue
                 content = data.get('serverContent')
                 if not content:
