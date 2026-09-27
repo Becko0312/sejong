@@ -15,6 +15,10 @@ GEMINI_WS = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelang
 LIVE_MODEL = os.getenv('GEMINI_LIVE_MODEL', 'gemini-2.5-flash-native-audio-latest')
 MAX_SECONDS = int(os.getenv('LIVE_MAX_SECONDS', '300'))
 VOICE = os.getenv('GEMINI_LIVE_VOICE', 'Aoede')
+# Barge-in tuning: short noises or speaker echo must not count as the student speaking,
+# otherwise Gemini aborts its reply mid-sentence and waits for a turn that never came.
+START_SENSITIVITY = os.getenv('GEMINI_LIVE_START_SENSITIVITY', 'START_SENSITIVITY_LOW')
+PREFIX_PADDING_MS = int(os.getenv('GEMINI_LIVE_PREFIX_PADDING_MS', '200'))
 
 VOICE_STYLE = (
     "\n\nYou are now in a LIVE SPOKEN conversation — the student hears your voice and talks back. "
@@ -40,6 +44,8 @@ async def proxy(client_send, client_messages, book_title, page):
         'generationConfig': {'responseModalities': ['AUDIO'],
                              'speechConfig': {'voiceConfig': {'prebuiltVoiceConfig': {'voiceName': VOICE}}}},
         'systemInstruction': {'parts': [{'text': system_instruction(book_title, page)}]},
+        'realtimeInputConfig': {'automaticActivityDetection': {
+            'startOfSpeechSensitivity': START_SENSITIVITY, 'prefixPaddingMs': PREFIX_PADDING_MS}},
         'inputAudioTranscription': {},
         'outputAudioTranscription': {},
     }}
