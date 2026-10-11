@@ -54,6 +54,7 @@ async function boot() {
     state.enrich = course.enrich || { enabled: false };
     state.summary = { enabled: false, built: [], scores: {}, ...(course.summary || {}) };
     state.role = account.role;
+    state.live = account.live || { enabled: false };
     // Each AI view appears once it has been built (admins see Interactive early: they can build pages on demand).
     const hasInteractive = state.enrich.enabled && ((state.enrich.built || 0) > 0 || account.role === 'admin');
     const hasSummary = state.summary.built.length > 0;
@@ -212,8 +213,8 @@ function setupTutor() {
     addNote('The AI tutor is not switched on for this server. You can still read every page of the course.');
     el.question.disabled = el.send.disabled = el.mic.disabled = true;
   }
-  // Live voice needs the Gemini provider (bidirectional audio); hide it otherwise.
-  if (!(state.tutor.enabled && state.tutor.provider === 'gemini')) el.liveBtn.hidden = true;
+  // Live voice needs a realtime voice provider (Gemini Live or OpenAI Realtime); hide it otherwise.
+  if (!(state.tutor.enabled && state.live.enabled)) el.liveBtn.hidden = true;
   else loadBilling();
   setupMic();
 }
@@ -796,10 +797,11 @@ async function startLive() {
     live.playNode.connect(live.playCtx.destination);
     live.playNode.port.onmessage = (e) => { if (live.active) vStatus(e.data === 'speaking' ? 'Tutor is speaking…' : 'Listening — go ahead', e.data === 'speaking' ? 'speaking' : 'listening'); };
 
-    live.capCtx = new AudioContext({ sampleRate: 16000 });
+    // Gemini wants 16 kHz mic audio, OpenAI 24 kHz; the server says which.
+    live.capCtx = new AudioContext({ sampleRate: state.live.input_rate || 16000 });
     await live.capCtx.audioWorklet.addModule('/static/live-capture.worklet.js');
     const src = live.capCtx.createMediaStreamSource(live.stream);
-    const capNode = new AudioWorkletNode(live.capCtx, 'capture');
+    const capNode = new AudioWorkletNode(live.capCtx, 'capture', { processorOptions: { rate: state.live.input_rate || 16000 } });
     capNode.port.onmessage = (e) => { if (live.ws && live.ws.readyState === 1) live.ws.send(JSON.stringify({ type: 'audio', data: int16ToB64(e.data) })); };
     src.connect(capNode);
 

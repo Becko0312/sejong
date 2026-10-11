@@ -1,10 +1,11 @@
-// Captures mic audio, downsamples to 16 kHz mono, emits Int16 PCM chunks (~120 ms).
+// Captures mic audio, downsamples to the provider's rate (16 kHz Gemini, 24 kHz OpenAI), emits Int16 PCM chunks (~120 ms).
 class Capture extends AudioWorkletProcessor {
-  constructor() {
+  constructor(options) {
     super();
-    this.ratio = Math.max(1, Math.round(sampleRate / 16000));
+    const rate = (options && options.processorOptions && options.processorOptions.rate) || 16000;
+    this.ratio = Math.max(1, Math.round(sampleRate / rate));
     this.buf = [];
-    this.flushAt = Math.round(16000 * 0.12);
+    this.flushAt = Math.round(rate * 0.12);
   }
   process(inputs) {
     const ch = inputs[0] && inputs[0][0];

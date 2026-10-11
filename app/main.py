@@ -90,7 +90,7 @@ def require_admin(request, csrf=True):
 def account(user):
     return {'authenticated': True, 'username': user['username'], 'role': user['role'],
             'csrf': hashlib.sha256(user['token'].encode()).hexdigest() if 'token' in user else user['csrf'],
-            'tutor': tutor.config(), 'tts': tts.config(), 'languages': list(lang.LANGUAGES)}
+            'tutor': tutor.config(), 'live': live.config(), 'tts': tts.config(), 'languages': list(lang.LANGUAGES)}
 
 
 def set_cookie(response, token):
@@ -572,7 +572,7 @@ async def live_ws(ws: WebSocket, job_id: str):
     if not user:
         await ws.close(code=4401)
         return
-    if not (tutor.provider() == 'gemini' and tutor.enabled()):
+    if not live.enabled():
         await ws.close(code=4400)
         return
     try:
