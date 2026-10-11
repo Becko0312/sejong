@@ -61,6 +61,7 @@ def initialize():
             db.execute('CREATE TABLE IF NOT EXISTS paylink_invoices (invid TEXT PRIMARY KEY, username TEXT, amount INTEGER, seconds INTEGER, status TEXT, created REAL, paid REAL)')
             db.execute('CREATE TABLE IF NOT EXISTS test_scores (username TEXT, job_id TEXT, lesson INTEGER, best INTEGER, last INTEGER, total INTEGER, attempts INTEGER, updated REAL, PRIMARY KEY(username, job_id, lesson))')
             db.execute('CREATE TABLE IF NOT EXISTS live_sessions (username TEXT, seconds REAL, prompt_tokens INTEGER, response_tokens INTEGER, created REAL)')
+            db.execute('CREATE TABLE IF NOT EXISTS ai_costs (created REAL, feature TEXT, model TEXT, input_tokens INTEGER, output_tokens INTEGER, cost_usd REAL, username TEXT)')
 
 
 def update(job_id, **values):

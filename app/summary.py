@@ -279,11 +279,11 @@ def generate(manifest, lesson, taught, explain):
         prompt = (SUMMARY_SYSTEM.format(**names) + f"\n\nLesson {lesson['index']}: {lesson['title']}"
                   f"\n<lesson_text>\n{text}\n</lesson_text>")
         summary = _parse_summary(enrich.call_gemini(
-            prompt, SUMMARY_OUTPUT_TOKENS, 'The lesson summary could not be built. Please try again.'))
+            prompt, SUMMARY_OUTPUT_TOKENS, 'The lesson summary could not be built. Please try again.', 'summary'))
         prompt = (TEST_SYSTEM.format(**names)
                   + f"\n\n<lesson_summary>\n{json.dumps(summary, ensure_ascii=False)}\n</lesson_summary>")
         test = _parse_test(enrich.call_gemini(
-            prompt, TEST_OUTPUT_TOKENS, 'The lesson test could not be built. Please try again.'))
+            prompt, TEST_OUTPUT_TOKENS, 'The lesson test could not be built. Please try again.', 'summary'))
     except enrich.EnrichError as exc:
         raise SummaryError(exc.message)
     return {'lesson': lesson, 'summary': summary, 'test': test, 'built': time.time()}

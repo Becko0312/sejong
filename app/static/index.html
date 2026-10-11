@@ -39,6 +39,34 @@
 
   <!-- Admin -->
   <section id="admin-view" class="view" hidden>
+    <section class="panel costs" aria-labelledby="costs-title">
+      <div class="view-head">
+        <h2 id="costs-title">Usage &amp; costs <span class="count">USD</span></h2>
+        <div class="costs-actions"><span id="costs-updated" class="costs-note"></span><button class="ghost" id="costs-refresh" type="button">↻ Refresh</button></div>
+      </div>
+      <div id="credit" class="credit" hidden>
+        <div class="credit-head"><span>Azure for Students credit</span><strong id="credit-left"></strong></div>
+        <div class="meter" role="meter" id="credit-meter" aria-valuemin="0"><span id="credit-fill"></span><span id="credit-pending"></span></div>
+        <p id="credit-detail" class="costs-note"></p>
+      </div>
+      <div class="tiles">
+        <div class="tile"><span>This month · total</span><strong id="t-month">–</strong></div>
+        <div class="tile"><span>Azure (server, disk, registry…)</span><strong id="t-azure">–</strong></div>
+        <div class="tile"><span>AI · Gemini</span><strong id="t-ai">–</strong></div>
+        <div class="tile"><span>AI today</span><strong id="t-today">–</strong></div>
+      </div>
+      <div class="chart-wrap">
+        <div class="chart-head"><h3>Daily cost · last 30 days</h3>
+          <div class="legend"><span><i class="sw azure"></i>Azure</span><span><i class="sw ai"></i>AI</span></div></div>
+        <div id="cost-chart" class="chart" role="img" aria-label="Daily cost bar chart"></div>
+        <div id="chart-tip" class="chart-tip" hidden></div>
+      </div>
+      <div class="cost-tables">
+        <table><caption>Azure this month</caption><thead><tr><th>Service</th><th>USD</th></tr></thead><tbody id="azure-rows"></tbody></table>
+        <table><caption>AI this month</caption><thead><tr><th>Feature</th><th>Calls</th><th>Tokens in / out</th><th>USD</th></tr></thead><tbody id="ai-rows"></tbody></table>
+      </div>
+      <p id="costs-msg" class="msg"></p>
+    </section>
     <div class="admin-grid">
       <section class="panel add-panel">
         <h2>Add a course</h2>

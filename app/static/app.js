@@ -2,7 +2,7 @@
 // Book2Course homepage: auth + role-based views (admin builds courses, clients study them).
 const $ = (s) => document.querySelector(s);
 const escape = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-let me = null, authMode = 'login', pollTimer = null, chosenFile = null;
+let me = null, authMode = 'login', pollTimer = null, costTimer = null, chosenFile = null;
 const enrichEst = {};
 const fmtK = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
@@ -24,12 +24,12 @@ function show(view) {
 }
 
 function render() {
-  clearTimeout(pollTimer);
+  clearTimeout(pollTimer); clearTimeout(costTimer);
   const box = $('#userbox');
   if (me && me.authenticated) {
     box.innerHTML = `<span class="role">${escape(me.role)}</span><span>${escape(me.username)}</span><button class="ghost" id="logout">Log out</button>`;
     $('#logout').addEventListener('click', logout);
-    if (me.role === 'admin') { show('admin-view'); fillLanguages(); loadAdmin(); } else { show('client-view'); loadCatalog(); }
+    if (me.role === 'admin') { show('admin-view'); fillLanguages(); loadAdmin(); loadCosts(); } else { show('client-view'); loadCatalog(); }
   } else {
     box.innerHTML = '';
     show('auth-view');
@@ -135,6 +135,92 @@ async function loadAdmin() {
     list.innerHTML = courses.length ? courses.map(adminRow).join('') : '<div class="empty">No courses yet. Add one on the left.</div>';
   } catch (err) { list.innerHTML = `<div class="empty">${escape(err.message)}</div>`; }
 }
+
+/* ---------- Usage & costs ---------- */
+const usd = (n, digits = 2) => (n == null ? '–' : `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits && Math.abs(n) < 1 ? 4 : digits })}`);
+const fmtDate = (iso) => new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+
+// AI spend is metered live by the server; Azure numbers are cached there for 10 minutes.
+async function loadCosts(refresh = false) {
+  clearTimeout(costTimer);
+  const msg = $('#costs-msg');
+  if ($('#t-month').textContent === '–') { msg.className = 'msg'; msg.textContent = 'Loading costs from Azure…'; }
+  try {
+    const data = await api(`/api/admin/costs${refresh ? '?refresh=1' : ''}`);
+    renderCosts(data);
+    msg.className = 'msg'; msg.textContent = (data.azure.errors || []).map((e) => `Azure — ${e}`).join(' ');
+  } catch (err) { msg.className = 'msg err'; msg.textContent = err.message; }
+  if (me && me.role === 'admin' && !$('#admin-view').hidden) costTimer = setTimeout(loadCosts, 60000);
+}
+
+function renderCosts(data) {
+  const { ai, azure } = data, costs = azure.costs, credit = azure.credit;
+  $('#t-month').textContent = usd(data.month_total_usd);
+  $('#t-azure').textContent = costs ? usd(costs.month_usd) : 'n/a';
+  $('#t-ai').textContent = usd(ai.totals.month_usd);
+  $('#t-today').textContent = usd(ai.totals.today_usd);
+  $('#costs-updated').textContent = `Updated ${new Date().toLocaleTimeString()} · Azure checked ${new Date(azure.checked * 1000).toLocaleTimeString()}`;
+
+  $('#credit').hidden = !credit;
+  if (credit) {
+    const total = credit.original_usd || 100, left = credit.balance_usd ?? 0, after = credit.estimated_usd ?? left;
+    const meter = $('#credit-meter');
+    $('#credit-left').textContent = `${usd(left)} left of ${usd(total, 0)}`;
+    $('#credit-fill').style.width = `${Math.max(0, Math.min(100, (after / total) * 100))}%`;
+    $('#credit-pending').style.left = $('#credit-fill').style.width;
+    $('#credit-pending').style.width = `${Math.max(0, Math.min(100, ((left - after) / total) * 100))}%`;
+    meter.classList.toggle('low', after / total < 0.2);
+    meter.setAttribute('aria-valuemax', total); meter.setAttribute('aria-valuenow', after);
+    // Only Azure usage draws down this credit (Gemini is billed by Google), so project from Azure's pace.
+    const recent = (costs ? costs.daily : []).slice(-8, -1);           // last 7 complete days
+    const pace = recent.length ? recent.reduce((a, d) => a + d.usd, 0) / recent.length : 0;
+    let line = `≈ ${usd(after)} once ${usd(credit.pending_usd)} of usage Azure is still processing is charged (striped part).`;
+    if (pace > 0) {
+      const runOut = new Date(Date.now() + (after / pace) * 86400000);
+      const expires = credit.expires ? new Date(credit.expires) : null;
+      line += ` At the last 7 days' pace (~${usd(pace)}/day) it runs out around ${fmtDate(runOut)}`
+        + (expires && runOut > expires ? `, after it expires on ${fmtDate(expires)}.` : '.');
+    }
+    if (credit.expires) line += ` Credit expires ${fmtDate(credit.expires)}.`;
+    $('#credit-detail').textContent = line;
+  }
+
+  // Daily stacked bars: Azure + AI per day for the last 30 days.
+  const days = {};
+  const today = new Date();
+  for (let i = 29; i >= 0; i--) { const d = new Date(today); d.setUTCDate(d.getUTCDate() - i); days[d.toISOString().slice(0, 10)] = { azure: 0, ai: 0 }; }
+  for (const d of (costs ? costs.daily : [])) if (days[d.date]) days[d.date].azure = d.usd;
+  for (const d of ai.daily) if (days[d.date]) days[d.date].ai = d.usd;
+  const entries = Object.entries(days), max = Math.max(...entries.map(([, v]) => v.azure + v.ai), 0);
+  const chart = $('#cost-chart');
+  chart.innerHTML = max > 0 ? entries.map(([date, v]) => {
+    const h = (x) => (x > 0 ? Math.max(2, (x / max) * 100) : 0);
+    return `<div class="bar" data-date="${date}" data-azure="${v.azure}" data-ai="${v.ai}">`
+      + `${v.azure ? `<span class="azure" data-h="${h(v.azure)}"></span>` : ''}${v.ai ? `<span class="ai" data-h="${h(v.ai)}"></span>` : ''}</div>`;
+  }).join('') : '<p class="chart-empty">No costs recorded yet.</p>';
+  // The CSP blocks inline style attributes, so heights are set through the DOM.
+  for (const seg of chart.querySelectorAll('[data-h]')) seg.style.height = `${seg.dataset.h}%`;
+
+  $('#azure-rows').innerHTML = costs && costs.services.length
+    ? costs.services.map((s) => `<tr><td>${escape(s.service)}</td><td>${usd(s.usd)}</td></tr>`).join('')
+    : `<tr><td colspan="2">${costs ? 'No Azure costs yet this month.' : 'Azure costs are not available.'}</td></tr>`;
+  $('#ai-rows').innerHTML = ai.features.map((f) => `<tr><td>${escape(f.label)}</td><td>${f.calls}</td>`
+    + `<td>${fmtK(f.input_tokens)} / ${fmtK(f.output_tokens)}</td><td>${usd(f.month_usd)}</td></tr>`).join('')
+    + `<tr><td colspan="4" class="costs-note">${escape(ai.note)}</td></tr>`;
+}
+
+$('#costs-refresh').addEventListener('click', () => loadCosts(true));
+$('#cost-chart').addEventListener('mousemove', (e) => {
+  const bar = e.target.closest('.bar'), tip = $('#chart-tip');
+  if (!bar) { tip.hidden = true; return; }
+  const az = Number(bar.dataset.azure), ai = Number(bar.dataset.ai);
+  tip.innerHTML = `<strong>${fmtDate(bar.dataset.date + 'T00:00:00Z')}</strong><br>Azure ${usd(az)}<br>AI ${usd(ai)}<br>Total ${usd(az + ai)}`;
+  tip.hidden = false;
+  const wrap = $('.chart-wrap').getBoundingClientRect(), r = bar.getBoundingClientRect();
+  tip.style.left = `${Math.min(wrap.width - tip.offsetWidth - 8, Math.max(8, r.left - wrap.left - tip.offsetWidth / 2))}px`;
+  tip.style.top = '34px';
+});
+$('#cost-chart').addEventListener('mouseleave', () => { $('#chart-tip').hidden = true; });
 
 function adminRow(c) {
   const langs = [c.source_lang, c.target_lang].filter(Boolean).join(' → ');

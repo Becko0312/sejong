@@ -16,6 +16,7 @@ import json
 import os
 import threading
 from pathlib import Path
+from app import costs
 
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
 GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
@@ -98,7 +99,7 @@ def _parse(raw):
     return {'sentences': sentences}
 
 
-def call_gemini(prompt, max_output_tokens, failure):
+def call_gemini(prompt, max_output_tokens, failure, feature='interactive'):
     """One JSON-mode Gemini request; returns the reply text or raises EnrichError(failure)."""
     body = {
         'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
@@ -120,6 +121,7 @@ def call_gemini(prompt, max_output_tokens, failure):
     if response.status_code != 200:
         raise EnrichError(failure)
     data = response.json()
+    costs.record_gemini(feature, GEMINI_MODEL, data)
     candidates = data.get('candidates') or []
     parts = candidates[0].get('content', {}).get('parts', []) if candidates else []
     return ''.join(p.get('text', '') for p in parts)

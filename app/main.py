@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import math
-from app import auth, billing, builder, enrich, live, store, summary, tts, tutor
+from app import auth, billing, builder, costs, enrich, live, store, summary, tts, tutor
 from app import languages as lang
 
 PUBLIC_ORIGIN = os.getenv('PUBLIC_ORIGIN', '').rstrip('/')
@@ -691,6 +691,13 @@ def admin_live_credit(body: GrantRequest, request: Request):
     if not billing.grant(body.username.strip(), body.minutes * 60):
         raise HTTPException(404, 'No such user.')
     return {'username': body.username.strip(), 'seconds': billing.balance(body.username.strip())}
+
+
+@app.get('/api/admin/costs')
+def admin_costs(request: Request, refresh: bool = False):
+    # Usage & cost meter: AI spend from our own token log, Azure spend + student credit from Azure.
+    require_admin(request, csrf=False)
+    return costs.overview(force=refresh)
 
 
 class TtsRequest(BaseModel):

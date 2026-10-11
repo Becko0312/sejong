@@ -8,6 +8,7 @@ Book text reaching this module is OCR/extracted from an untrusted PDF, so it is
 passed to the model strictly as reference DATA, never as instructions.
 """
 import os
+from app import costs
 
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
 GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
@@ -186,6 +187,7 @@ def _gemini(messages):
     if response.status_code != 200:
         raise TutorError('The tutor could not respond right now. Please try again.')
     data = response.json()
+    costs.record_gemini('tutor', GEMINI_MODEL, data)
     if data.get('promptFeedback', {}).get('blockReason'):
         raise TutorError('The tutor could not answer that. Please rephrase your question.')
     candidates = data.get('candidates') or []
@@ -210,6 +212,9 @@ def _anthropic(messages):
         raise TutorError('The tutor is busy right now. Please try again in a moment.')
     except anthropic.APIError as exc:
         raise TutorError('The tutor could not respond right now. Please try again.') from exc
+    used = getattr(response, 'usage', None)
+    if used is not None:
+        costs.record('tutor', response.model, getattr(used, 'input_tokens', 0), getattr(used, 'output_tokens', 0))
     return ''.join(block.text for block in response.content if block.type == 'text'), response.model
 
 
