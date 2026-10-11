@@ -4,7 +4,7 @@ The browser streams microphone audio (PCM16, base64) over our own WebSocket; we 
 the provider chosen by LIVE_PROVIDER and stream the model's spoken audio (24 kHz PCM16) and
 transcripts back. Keys stay server-side, and the session is grounded in the page being viewed.
 
-- gemini: Gemini Live API (bidiGenerateContent), mic at 16 kHz.
+- gemini: Gemini Live API (AI Studio, or Vertex AI when GOOGLE_VERTEX_PROJECT is set), mic at 16 kHz.
 - openai: OpenAI Realtime API (e.g. gpt-realtime-mini), mic at 24 kHz. Uses Azure OpenAI when
   AZURE_OPENAI_ENDPOINT/AZURE_OPENAI_KEY are set, otherwise OPENAI_API_KEY at api.openai.com.
 """
@@ -15,9 +15,8 @@ import logging
 import os
 import time
 import websockets
-from app import languages, tutor
+from app import google_ai, languages, tutor
 
-GEMINI_WS = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent'
 LIVE_MODEL = os.getenv('GEMINI_LIVE_MODEL', 'gemini-2.5-flash-native-audio-latest')
 # Safety cap for one session (a forgotten open tab); the student's balance usually ends it first.
 MAX_SECONDS = int(os.getenv('LIVE_MAX_SECONDS', '3600'))
@@ -99,7 +98,7 @@ def openai_target():
 def enabled():
     if provider() == 'openai':
         return openai_target() is not None
-    return provider() == 'gemini' and bool(os.getenv('GEMINI_API_KEY'))
+    return provider() == 'gemini' and google_ai.configured()
 
 
 def config():
@@ -131,8 +130,8 @@ async def proxy_gemini(client_send, client_messages, book_title, page, usage=Non
     usage.setdefault('prompt', 0)
     usage.setdefault('response', 0)
     turn = {}
-    key = os.getenv('GEMINI_API_KEY')
     instruction = system_instruction(book_title, page, course_languages)
+    model = {'name': None}       # AI Studio 'models/…' or a Vertex AI model path
     # gemini: the connection that takes input (None while connecting); handle: latest resume point.
     state = {'gemini': None, 'handle': None}
     # Student input that arrives while we reconnect; sent once the new connection is ready.
@@ -140,7 +139,7 @@ async def proxy_gemini(client_send, client_messages, book_title, page, usage=Non
 
     def setup():
         return {'setup': {
-            'model': f'models/{LIVE_MODEL}',
+            'model': model['name'],
             'generationConfig': {'responseModalities': ['AUDIO'],
                                  'speechConfig': {'voiceConfig': {'prebuiltVoiceConfig': {'voiceName': VOICE}}}},
             'systemInstruction': {'parts': [{'text': instruction}]},
@@ -184,7 +183,9 @@ async def proxy_gemini(client_send, client_messages, book_title, page, usage=Non
         """Run one Gemini connection; returns True if it got ready (setupComplete)."""
         ready = False
         try:
-            async with websockets.connect(f'{GEMINI_WS}?key={key}', max_size=None, ping_interval=20) as gemini:
+            # Vertex AI tokens are short-lived, so each connection signs in afresh (off the event loop).
+            url, headers, model['name'] = await asyncio.to_thread(google_ai.live_target, LIVE_MODEL)
+            async with websockets.connect(url, additional_headers=headers, max_size=None, ping_interval=20) as gemini:
                 await gemini.send(json.dumps(setup()))
                 async for raw in gemini:
                     data = json.loads(raw)
@@ -227,7 +228,7 @@ async def proxy_gemini(client_send, client_messages, book_title, page, usage=Non
                     if content.get('turnComplete'):
                         add_turn()
                         await client_send({'type': 'turn_end'})
-        except (websockets.ConnectionClosed, OSError) as exc:
+        except (websockets.ConnectionClosed, websockets.InvalidStatus, OSError, google_ai.AuthError) as exc:
             log.info('Gemini Live connection dropped: %s', exc)
         finally:
             state['gemini'] = None

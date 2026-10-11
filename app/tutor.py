@@ -8,10 +8,9 @@ Book text reaching this module is OCR/extracted from an untrusted PDF, so it is
 passed to the model strictly as reference DATA, never as instructions.
 """
 import os
-from app import costs
+from app import costs, google_ai
 
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
-GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
 ANTHROPIC_MODEL = os.getenv('TUTOR_MODEL', 'claude-opus-5')
 EFFORT = os.getenv('TUTOR_EFFORT', 'low')
 MAX_TOKENS = int(os.getenv('TUTOR_MAX_TOKENS', '1024'))
@@ -65,7 +64,7 @@ def provider():
     explicit = os.getenv('TUTOR_PROVIDER', '').strip().lower()
     if explicit:
         return explicit
-    return 'gemini' if os.getenv('GEMINI_API_KEY') else 'anthropic'
+    return 'gemini' if (os.getenv('GEMINI_API_KEY') or google_ai.backend() == 'vertex') else 'anthropic'
 
 
 def model_name():
@@ -75,7 +74,7 @@ def model_name():
 def enabled():
     """True when the selected provider has a credential and its client is usable."""
     if provider() == 'gemini':
-        return bool(os.getenv('GEMINI_API_KEY'))
+        return google_ai.configured()
     if not (os.getenv('ANTHROPIC_API_KEY') or os.getenv('ANTHROPIC_AUTH_TOKEN')):
         return False
     try:
@@ -166,7 +165,6 @@ def answer(question, book_title, page, history=None, mode=None):
 
 def _gemini(messages):
     import requests
-    key = os.getenv('GEMINI_API_KEY')
     body = {
         'system_instruction': {'parts': [{'text': SYSTEM}]},
         'contents': [{'role': 'model' if m['role'] == 'assistant' else 'user', 'parts': [{'text': m['content']}]} for m in messages],
@@ -176,9 +174,9 @@ def _gemini(messages):
         # Keep the tutor fast and cheap; no visible reasoning is needed for tutoring.
         body['generationConfig']['thinkingConfig'] = {'thinkingBudget': 0}
     try:
-        response = requests.post(GEMINI_ENDPOINT.format(model=GEMINI_MODEL),
-                                 params={'key': key}, json=body, timeout=45)
-    except requests.RequestException as exc:
+        url, params, headers = google_ai.rest_request(GEMINI_MODEL)
+        response = requests.post(url, params=params, headers=headers, json=body, timeout=45)
+    except (requests.RequestException, google_ai.AuthError) as exc:
         raise TutorError('The tutor could not respond right now. Please try again.') from exc
     if response.status_code in (401, 403):
         raise TutorError('The AI tutor credentials are invalid.')

@@ -55,7 +55,7 @@ def test_gemini_provider_maps_roles(monkeypatch):
     monkeypatch.setenv('TUTOR_PROVIDER', 'gemini')
     monkeypatch.setenv('GEMINI_API_KEY', 'AQ.test')
     import requests
-    monkeypatch.setattr(requests, 'post', lambda url, params=None, json=None, timeout=None: capture.update(url=url, params=params, body=json) or types.SimpleNamespace(status_code=200, json=lambda: {'candidates': [{'content': {'parts': [{'text': '좋아요'}]}}], 'modelVersion': 'gemini-2.5-flash'}))
+    monkeypatch.setattr(requests, 'post', lambda url, params=None, json=None, timeout=None, headers=None: capture.update(url=url, params=params, body=json, headers=headers) or types.SimpleNamespace(status_code=200, json=lambda: {'candidates': [{'content': {'parts': [{'text': '좋아요'}]}}], 'modelVersion': 'gemini-2.5-flash'}))
     out = tutor.answer('hi', 'Book', {'number': 1, 'text': '안녕'}, [{'role': 'assistant', 'content': 'x'}])
     assert out['reply'] == '좋아요'
     assert capture['body']['contents'][0]['role'] == 'user'

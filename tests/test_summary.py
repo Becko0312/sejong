@@ -23,7 +23,7 @@ def fake_gemini(monkeypatch):
     monkeypatch.setenv('GEMINI_API_KEY', 'AQ.test')
     import requests
 
-    def fake_post(url, params=None, json=None, timeout=None):
+    def fake_post(url, params=None, json=None, timeout=None, headers=None):
         calls.append(json)
         prompt = json['contents'][0]['parts'][0]['text']
         text = __import__('json').dumps(TEST if '<lesson_summary>' in prompt else SUMMARY)

@@ -15,11 +15,11 @@ field-by-field before anything is stored or rendered.
 import json
 import os
 import threading
+from app import google_ai
 from pathlib import Path
 from app import costs
 
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
-GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
 MAX_TEXT = 6000
 MAX_SENTENCES = 40
 MAX_OUTPUT_TOKENS = 2048
@@ -62,8 +62,8 @@ class EnrichError(Exception):
 
 
 def enabled():
-    """Interactive pages need the same Gemini key the tutor uses."""
-    return bool(os.getenv('GEMINI_API_KEY'))
+    """Interactive pages need the same Gemini access the tutor uses (AI Studio key or Vertex AI)."""
+    return google_ai.configured()
 
 
 def config():
@@ -110,9 +110,9 @@ def call_gemini(prompt, max_output_tokens, failure, feature='interactive'):
         body['generationConfig']['thinkingConfig'] = {'thinkingBudget': 0}
     import requests
     try:
-        response = requests.post(GEMINI_ENDPOINT.format(model=GEMINI_MODEL),
-                                 params={'key': os.getenv('GEMINI_API_KEY')}, json=body, timeout=120)
-    except requests.RequestException as exc:
+        url, params, headers = google_ai.rest_request(GEMINI_MODEL)
+        response = requests.post(url, params=params, headers=headers, json=body, timeout=120)
+    except (requests.RequestException, google_ai.AuthError) as exc:
         raise EnrichError(failure) from exc
     if response.status_code in (401, 403):
         raise EnrichError('The AI credentials are invalid.')

@@ -17,7 +17,7 @@ def fake_gemini(monkeypatch, payload=None):
     monkeypatch.setenv('GEMINI_API_KEY', 'AQ.test')
     import requests
 
-    def fake_post(url, params=None, json=None, timeout=None):
+    def fake_post(url, params=None, json=None, timeout=None, headers=None):
         calls.append(json)
         return types.SimpleNamespace(status_code=200,
                                      json=lambda: {'candidates': [{'content': {'parts': [{'text': text}]}}]})
