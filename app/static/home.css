@@ -30,10 +30,12 @@ h1,h2{font-family:Georgia,serif;font-weight:400;letter-spacing:-.5px}
 .tabs{display:flex;gap:6px;background:#eef1ea;border-radius:9px;padding:4px;margin-bottom:20px}
 .tab{flex:1;background:transparent;color:#5f6d5f;padding:9px;border-radius:6px;font-size:13px}
 .tab.active{background:#fff;color:#22483d;box-shadow:0 1px 4px rgba(0,0,0,.06)}
-#auth-form{display:flex;flex-direction:column}
+#auth-form,#native-field{display:flex;flex-direction:column}
+#native-field[hidden]{display:none}
+#native-field .hint{margin-top:6px}
 #auth-form label,.add-panel label{font-size:11px;font-weight:600;color:#4a5a4f;margin:12px 0 6px}
-#auth-form input,.add-panel input,.add-panel select{border:1px solid #d3ddcc;border-radius:8px;padding:11px 12px;font:inherit;font-size:14px;color:#28382f;background:#fbfcf9}
-#auth-form input:focus,.add-panel input:focus,.add-panel select:focus{outline:2px solid #487a5b;outline-offset:0}
+#auth-form input,#auth-form select,.add-panel input,.add-panel select{border:1px solid #d3ddcc;border-radius:8px;padding:11px 12px;font:inherit;font-size:14px;color:#28382f;background:#fbfcf9}
+#auth-form input:focus,#auth-form select:focus,.add-panel input:focus,.add-panel select:focus{outline:2px solid #487a5b;outline-offset:0}
 #auth-submit,#add-submit{margin-top:18px;padding:12px}
 .hint{font-size:12px;color:#7a8577;margin-top:14px}
 

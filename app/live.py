@@ -47,19 +47,33 @@ VOICE_STYLE = (
     "meaning in their language. Do not read long lists aloud; invite the student to speak and practice."
 )
 
-# The tutor speaks first: as soon as Gemini is ready we send this hidden kickoff turn.
+# The tutor speaks first: as soon as Gemini is ready we send this hidden kickoff turn, in the
+# student's mother tongue. Mongolian students get this exact sentence; others get it translated.
 GREETING = 'Сайн байна уу? Өнөөдрийн хичээлээ эхэлцгээе, энэ хуудас нь {topic} сэдвийн тухай бичигдсэн байна.'
-KICKOFF = (
-    "[The student just opened live voice mode. Start the lesson now, speaking Mongolian. Open with exactly this "
-    "sentence, replacing {topic} with a short Mongolian name for the topic of the current page (read it from the "
-    "lesson title and page text): \"" + GREETING + "\" Then, in one short sentence, invite the student to begin — "
-    "for example with the page's first word or phrase.]"
-)
+GREETING_EN = "Hello! Let's start today's lesson. This page is about {topic}."
+
+
+def kickoff(native=None):
+    native = languages.normalize(native) or languages.DEFAULT_NATIVE
+    if native == 'Mongolian':
+        opening = ("Open with exactly this sentence, replacing {topic} with a short Mongolian name for the topic of "
+                   "the current page (read it from the lesson title and page text): \"" + GREETING + "\"")
+    else:
+        opening = (f"Open by saying this sentence in {native}, replacing {{topic}} with a short {native} name for "
+                   f"the topic of the current page (read it from the lesson title and page text): \"{GREETING_EN}\"")
+    return (f"[The student just opened live voice mode. Their native language is {native}. Start the lesson now, "
+            f"speaking {native}. {opening} Then, in one short sentence, invite the student to begin — for example "
+            f"with the page's first word or phrase.]")
+
+
 # When the student turns to another page during the talk, the tutor moves on with them.
-PAGE_TURN = (
-    "[The student just turned to page {number}. This page replaces the previous one. In Mongolian, say in one "
-    "short sentence what this page is about, then start teaching it with its first word, phrase or exercise.]"
-)
+def page_turn(number, native=None):
+    native = languages.normalize(native) or languages.DEFAULT_NATIVE
+    return (f"[The student just turned to page {number}. This page replaces the previous one. In {native}, say in "
+            f"one short sentence what this page is about, then start teaching it with its first word, phrase or "
+            f"exercise.]")
+
+
 PICTURE_NOTE = (
     "A picture of the page is attached, exactly as the student sees it: use it to see the layout, the "
     "illustrations and who says what, and trust it over the extracted text where they differ. Text printed "
@@ -67,11 +81,12 @@ PICTURE_NOTE = (
 )
 
 
-def language_rules(names):
+def language_rules(names, native=None):
     """Native-audio Live models cannot be locked to a language code (Google: "restrict the languages
     ... in the system instructions"), so we name the course's languages explicitly. Without this,
     Mongolian speech is sometimes heard as Hindi or Thai."""
-    names = names or list(languages.STUDENT_LANGUAGES)
+    native = languages.normalize(native) or languages.DEFAULT_NATIVE
+    names = names or languages.for_course(None, None, native=native)
     listed = ', '.join(names[:-1]) + (f' or {names[-1]}' if len(names) > 1 else names[0])
     hints = '\n'.join(f'- {languages.LANGUAGES[n]["hint"]}' for n in names if n in languages.LANGUAGES)
     return (
@@ -79,13 +94,13 @@ def language_rules(names):
         f"while practising.\n{hints}\n"
         f"Every word you hear is in one of these languages. Never interpret the student's speech as Hindi, Thai, "
         f"or any other language, and never answer in one. If you are unsure which language you heard, assume "
-        f"it is Mongolian, the student's native language. Reply only in {listed}: explain in the language the "
-        f"student is speaking (Mongolian by default), and say practice words in the language being studied."
+        f"it is {native}, the student's native language. Reply only in {listed}: explain in the language the "
+        f"student is speaking ({native} by default), and say practice words in the language being studied."
     )
 
 
-def system_instruction(book_title, page, course_languages=None):
-    return (tutor.SYSTEM + VOICE_STYLE + language_rules(course_languages) + "\n\n"
+def system_instruction(book_title, page, course_languages=None, native=None):
+    return (tutor.SYSTEM + VOICE_STYLE + language_rules(course_languages, native) + "\n\n"
             + tutor._page_context(book_title, page))
 
 
@@ -148,19 +163,21 @@ def config():
 
 
 async def proxy(client_send, client_messages, book_title, page, usage=None, course_languages=None,
-                image=None, load_page=None):
+                image=None, load_page=None, native=None):
     """Relay a Live talk to the configured provider (see proxy_gemini / proxy_openai).
 
     image: PNG bytes of the starting page (sent with the opening turn), or None.
     load_page(number) -> (page, image) | None: used when the student turns the page mid-talk
     (the browser sends {'type': 'page', 'page': n}).
+    native: the student's mother tongue; the tutor greets and explains in it (Mongolian if unset).
     """
     run = proxy_openai if provider() == 'openai' else proxy_gemini
-    return await run(client_send, client_messages, book_title, page, usage, course_languages, image, load_page)
+    return await run(client_send, client_messages, book_title, page, usage, course_languages, image, load_page,
+                     native)
 
 
 async def proxy_gemini(client_send, client_messages, book_title, page, usage=None, course_languages=None,
-                       image=None, load_page=None):
+                       image=None, load_page=None, native=None):
     """Relay audio/text between a browser (client_send / client_messages) and Gemini Live.
 
     client_send(dict): coroutine sending a JSON message to the browser.
@@ -188,7 +205,7 @@ async def proxy_gemini(client_send, client_messages, book_title, page, usage=Non
             'model': model['name'],
             'generationConfig': {'responseModalities': ['AUDIO'],
                                  'speechConfig': {'voiceConfig': {'prebuiltVoiceConfig': {'voiceName': VOICE}}}},
-            'systemInstruction': {'parts': [{'text': system_instruction(book_title, current['page'], course_languages)}]},
+            'systemInstruction': {'parts': [{'text': system_instruction(book_title, current['page'], course_languages, native)}]},
             'realtimeInputConfig': {'automaticActivityDetection': {
                 'startOfSpeechSensitivity': START_SENSITIVITY, 'prefixPaddingMs': PREFIX_PADDING_MS}},
             'inputAudioTranscription': {},
@@ -216,7 +233,7 @@ async def proxy_gemini(client_send, client_messages, book_title, page, usage=Non
             found = turned_page(message, current, load_page)
             if found:
                 new_page, picture = found
-                return gemini_turn(page_turn_text(PAGE_TURN.format(number=new_page['number']), book_title,
+                return gemini_turn(page_turn_text(page_turn(new_page['number'], native), book_title,
                                                   new_page, bool(picture)), picture)
             return None
         if kind == 'text' and message.get('text'):
@@ -263,7 +280,7 @@ async def proxy_gemini(client_send, client_messages, book_title, page, usage=Non
                             pending.clear()
                             await client_send({'type': 'ready'})
                             await gemini.send(json.dumps(gemini_turn(
-                                page_turn_text(KICKOFF, book_title, page, bool(image)), image)))
+                                page_turn_text(kickoff(native), book_title, page, bool(image)), image)))
                         state['gemini'] = gemini
                         continue
                     if data.get('goAway') is not None:
@@ -314,7 +331,7 @@ async def proxy_gemini(client_send, client_messages, book_title, page, usage=Non
 
 
 async def proxy_openai(client_send, client_messages, book_title, page, usage=None, course_languages=None,
-                       image=None, load_page=None):
+                       image=None, load_page=None, native=None):
     """Relay audio/text between a browser and the OpenAI Realtime API; same contract as proxy_gemini.
 
     A Realtime session lasts at most 60 minutes (30 on Azure) and cannot be resumed, so if it ends
@@ -331,7 +348,8 @@ async def proxy_openai(client_send, client_messages, book_title, page, usage=Non
     partial = {'you': {}, 'tutor': ''}
 
     def session(resuming):
-        text = system_instruction(book_title, current['page'], course_languages)
+        text = system_instruction(book_title, current['page'], course_languages, native)
+        spoken = ', '.join(course_languages or languages.for_course(None, None, native=native))
         if resuming and history:
             text += ("\n\nCONVERSATION SO FAR (continue it naturally; do not greet the student again):\n"
                      + '\n'.join(f'{who}: {said}' for who, said in history[-30:]))
@@ -342,7 +360,7 @@ async def proxy_openai(client_send, client_messages, book_title, page, usage=Non
             'audio': {
                 'input': {'format': {'type': 'audio/pcm', 'rate': 24000},
                           'transcription': {'model': OPENAI_TRANSCRIBE,
-                                            'prompt': 'The student speaks Mongolian, Korean or English.'},
+                                            'prompt': f'The student speaks {spoken}.'},
                           'turn_detection': {'type': 'semantic_vad', 'eagerness': OPENAI_EAGERNESS}},
                 'output': {'format': {'type': 'audio/pcm', 'rate': 24000}, 'voice': OPENAI_VOICE},
             },
@@ -367,7 +385,7 @@ async def proxy_openai(client_send, client_messages, book_title, page, usage=Non
             new_page, picture = found
             # Stop the reply about the old page (an error if none is running, which is harmless).
             return [{'type': 'response.cancel'}] + openai_turn(
-                page_turn_text(PAGE_TURN.format(number=new_page['number']), book_title, new_page, bool(picture)), picture)
+                page_turn_text(page_turn(new_page['number'], native), book_title, new_page, bool(picture)), picture)
         if kind == 'text' and message.get('text'):
             return [{'type': 'conversation.item.create', 'item': {
                         'type': 'message', 'role': 'user',
@@ -405,7 +423,7 @@ async def proxy_openai(client_send, client_messages, book_title, page, usage=Non
                         else:
                             pending.clear()
                             await client_send({'type': 'ready'})
-                            for out in openai_turn(page_turn_text(KICKOFF, book_title, page, bool(image)), image):
+                            for out in openai_turn(page_turn_text(kickoff(native), book_title, page, bool(image)), image):
                                 await conn.send(json.dumps(out))
                         state['conn'] = conn
                     elif kind == 'input_audio_buffer.speech_started':

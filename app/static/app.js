@@ -32,6 +32,7 @@ function render() {
     if (me.role === 'admin') { show('admin-view'); fillLanguages(); loadAdmin(); loadCosts(); loadStudents(); } else { show('client-view'); loadCatalog(); }
   } else {
     box.innerHTML = '';
+    fillNativeLanguages();
     show('auth-view');
   }
 }
@@ -44,6 +45,8 @@ function setAuthMode(mode) {
   $('#auth-submit').textContent = mode === 'login' ? 'Log in' : 'Create account';
   $('#password').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
   $('#auth-hint').style.display = mode === 'login' ? 'block' : 'none';
+  $('#native-field').hidden = mode === 'login';
+  $('#native-lang').required = mode === 'register';
   $('#auth-msg').textContent = '';
 }
 $('#tab-login').addEventListener('click', () => setAuthMode('login'));
@@ -53,16 +56,26 @@ $('#switch-register').addEventListener('click', (e) => { e.preventDefault(); set
 $('#auth-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const username = $('#username').value.trim(), password = $('#password').value;
+  const body = authMode === 'login' ? { username, password } : { username, password, native_lang: $('#native-lang').value };
   $('#auth-submit').disabled = true; $('#auth-msg').className = 'msg'; $('#auth-msg').textContent = 'Please wait…';
   try {
     await api(`/api/${authMode === 'login' ? 'login' : 'register'}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     $('#password').value = '';
     await boot();
   } catch (err) { $('#auth-msg').className = 'msg err'; $('#auth-msg').textContent = err.message; }
   finally { $('#auth-submit').disabled = false; }
 });
+
+// Sign-up asks for the student's mother tongue; the Live tutor greets and explains in it.
+function fillNativeLanguages() {
+  const sel = $('#native-lang');
+  if (sel.options.length > 1 || !me || !me.native_languages) return;
+  for (const [name, native] of Object.entries(me.native_languages)) {
+    sel.add(new Option(native === name ? name : `${native} (${name})`, name));
+  }
+}
 
 // Course languages come from the server's supported list (see app/languages.py).
 function fillLanguages() {

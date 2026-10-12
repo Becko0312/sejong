@@ -18,6 +18,9 @@ OCR_CODES = {v['ocr']: k for k, v in LANGUAGES.items()}
 # Our students are Mongolian and every course also allows English, so a live session always
 # accepts these two besides the course's own language pair.
 STUDENT_LANGUAGES = ('Mongolian', 'English')
+# A student's mother tongue (picked at sign-up): the tutor greets and explains in it.
+# Accounts made before that question existed are treated as Mongolian.
+DEFAULT_NATIVE = 'Mongolian'
 
 
 def normalize(value):
@@ -41,15 +44,16 @@ def ocr_for(*names):
     return '+'.join(codes)
 
 
-def for_course(source_lang, target_lang, ocr_languages=''):
+def for_course(source_lang, target_lang, ocr_languages='', native=None):
     """Every language a student may speak in this course, most specific first.
 
-    Older courses without a language pair fall back to the OCR languages they were built with."""
+    Older courses without a language pair fall back to the OCR languages they were built with.
+    native: the student's mother tongue, always included."""
     names = [normalize(source_lang), normalize(target_lang)]
     if not any(names):
         names = [OCR_CODES.get(code) for code in (ocr_languages or '').split('+')]
     result = []
-    for name in (*names, *STUDENT_LANGUAGES):
+    for name in (*names, normalize(native), *STUDENT_LANGUAGES):
         if name and name not in result:
             result.append(name)
     return result

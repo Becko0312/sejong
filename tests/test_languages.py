@@ -36,3 +36,28 @@ def test_upload_derives_ocr_from_language_pair(admin):
     assert a.patch(f"/api/jobs/{job['id']}", json={'source_lang': 'Thai'}, headers=ha).status_code == 400
     assert a.patch(f"/api/jobs/{job['id']}", json={'source_lang': 'russian'}, headers=ha).json()['source_lang'] == 'Russian'
     assert a.get('/api/me').json()['languages'] == list(languages.LANGUAGES)
+
+
+def test_native_language_drives_the_live_greeting():
+    assert languages.for_course('Korean', 'Mongolian', native='English') == ['Korean', 'Mongolian', 'English']
+    assert languages.for_course('Korean', 'Japanese', native='Russian') == ['Korean', 'Japanese', 'Russian', 'Mongolian', 'English']
+    english = live.kickoff('English')
+    assert 'speaking English' in english and 'Сайн байна уу' not in english
+    assert 'Сайн байна уу' in live.kickoff(None) and 'speaking Mongolian' in live.kickoff('Mongolian')
+    assert 'In English' in live.page_turn(3, 'English')
+    rules = live.language_rules(['Korean', 'English', 'Mongolian'], 'English')
+    assert 'assume it is English' in rules and '(English by default)' in rules
+
+
+def test_sign_up_stores_the_mother_tongue(env):
+    from fastapi.testclient import TestClient
+    from app import main
+    with TestClient(main.app) as client:      # lifespan creates the tables
+        assert 'English' in client.get('/api/me').json()['native_languages']
+        res = client.post('/api/register', json={'username': 'eng_student', 'password': 'password123', 'native_lang': 'english'})
+        assert res.status_code == 200 and res.json()['native_lang'] == 'English'
+        bad = client.post('/api/register', json={'username': 'x_student', 'password': 'password123', 'native_lang': 'Klingon'})
+        assert bad.status_code == 400
+        # Older app versions do not send it: Mongolian, as before.
+        old = client.post('/api/register', json={'username': 'mn_student', 'password': 'password123'})
+        assert old.json()['native_lang'] == 'Mongolian'

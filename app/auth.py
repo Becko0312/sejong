@@ -11,7 +11,7 @@ import os
 import re
 import secrets
 import time
-from app import store
+from app import languages, store
 
 COOKIE = 'b2c_session'
 USERNAME_RE = re.compile(r'[A-Za-z0-9_.-]{3,32}')
@@ -52,17 +52,28 @@ def seed_admin():
             db.execute('UPDATE users SET role=? WHERE username=?', ('admin', username))
 
 
-def register(username, password, role='client'):
+def register(username, password, role='client', native_lang=None):
+    """native_lang: the student's mother tongue (a languages.LANGUAGES name); the Live tutor speaks it."""
     username = (username or '').strip()
     if not valid_username(username):
         raise AuthError(400, 'Username must be 3-32 letters, numbers, dot, dash or underscore.')
     if not password or len(password) < 8:
         raise AuthError(400, 'Password must be at least 8 characters.')
+    native = languages.normalize(native_lang) if native_lang else languages.DEFAULT_NATIVE
+    if not native:
+        raise AuthError(400, 'Please choose your native language from the list.')
     with store.connect() as db:
         if db.execute('SELECT 1 FROM users WHERE username=?', (username,)).fetchone():
             raise AuthError(409, 'That username is taken.')
-        db.execute('INSERT INTO users(username, password_hash, role, created) VALUES(?,?,?,?)',
-                   (username, hash_password(password), role, time.time()))
+        db.execute('INSERT INTO users(username, password_hash, role, created, native_lang) VALUES(?,?,?,?,?)',
+                   (username, hash_password(password), role, time.time(), native))
+
+
+def native_language(username):
+    """The student's mother tongue; Mongolian for accounts made before sign-up asked for it."""
+    with store.connect() as db:
+        row = db.execute('SELECT native_lang FROM users WHERE username=?', (username,)).fetchone()
+    return languages.normalize(row and row['native_lang']) or languages.DEFAULT_NATIVE
 
 
 def login(username, password):

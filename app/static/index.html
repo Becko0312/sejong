@@ -24,6 +24,11 @@
         <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
         <label for="password">Password</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <div id="native-field" hidden>
+          <label for="native-lang">Your native language (mother tongue)</label>
+          <select id="native-lang" name="native_lang"><option value="" disabled selected>Choose your language…</option></select>
+          <p class="hint">Your Live voice tutor will greet you and explain in this language.</p>
+        </div>
         <button id="auth-submit" type="submit">Log in</button>
         <p id="auth-msg" class="msg" role="status" aria-live="polite"></p>
         <p class="hint" id="auth-hint">New here? <a href="#" id="switch-register">Create a student account</a>.</p>

@@ -90,7 +90,8 @@ def require_admin(request, csrf=True):
 def account(user):
     return {'authenticated': True, 'username': user['username'], 'role': user['role'],
             'csrf': hashlib.sha256(user['token'].encode()).hexdigest() if 'token' in user else user['csrf'],
-            'tutor': tutor.config(), 'live': live.config(), 'tts': tts.config(), 'languages': list(lang.LANGUAGES)}
+            'tutor': tutor.config(), 'live': live.config(), 'tts': tts.config(), 'languages': list(lang.LANGUAGES),
+            'native_lang': auth.native_language(user['username'])}
 
 
 def set_cookie(response, token):
@@ -100,6 +101,10 @@ def set_cookie(response, token):
 class Credentials(BaseModel):
     username: str = Field(max_length=32)
     password: str = Field(max_length=200)
+
+
+class SignUp(Credentials):
+    native_lang: str | None = Field(default=None, max_length=40)   # mother tongue; older apps omit it
 
 
 @app.get('/')
@@ -151,15 +156,17 @@ def health():
 def me(request: Request):
     user = auth.session(request)
     if not user:
-        return {'authenticated': False, 'tutor': tutor.config()}
+        # The sign-up form asks for the student's mother tongue from this list.
+        return {'authenticated': False, 'tutor': tutor.config(),
+                'native_languages': {name: info['native'] for name, info in lang.LANGUAGES.items()}}
     return account(user)
 
 
 @app.post('/api/register')
-def register(body: Credentials, request: Request):
+def register(body: SignUp, request: Request):
     check_csrf_origin(request)
     try:
-        auth.register(body.username, body.password, 'client')
+        auth.register(body.username, body.password, 'client', body.native_lang)
         token, role = auth.login(body.username, body.password)
     except auth.AuthError as exc:
         raise HTTPException(exc.code, exc.message)
@@ -663,10 +670,12 @@ async def live_ws(ws: WebSocket, job_id: str):
         found = tutor.locate_page(manifest, number)
         return (found, live.page_image(output_dir, number)) if found else None
 
+    # The tutor greets and explains in the student's mother tongue (chosen at sign-up).
+    native = auth.native_language(user['username'])
     talk = asyncio.ensure_future(live.proxy(
         ws.send_json, messages(), job.get('title') or 'this course', page, usage,
-        lang.for_course(job.get('source_lang'), job.get('target_lang'), job.get('languages')),
-        image=live.page_image(output_dir, page['number']), load_page=load_page))
+        lang.for_course(job.get('source_lang'), job.get('target_lang'), job.get('languages'), native),
+        image=live.page_image(output_dir, page['number']), load_page=load_page, native=native))
     billing_task = None if admin else asyncio.ensure_future(meter())
     try:
         done, _ = await asyncio.wait({t for t in (talk, billing_task) if t}, timeout=live.MAX_SECONDS,
