@@ -88,7 +88,31 @@ def test_client_studies_available_course_with_tutor(admin, client_user, monkeypa
     res = c.post(f'/api/tutor/{job_id}', json={'page': 1, 'mode': 'explain'}, headers=hc)
     assert res.status_code == 200, res.text
     assert '안녕하세요' in res.json()['reply']
-    assert '안녕하세요 hello' in capture['messages'][-1]['content']
+    image, text = capture['messages'][-1]['content']           # the page picture travels with the question
+    assert image['type'] == 'image' and image['source']['media_type'] == 'image/png'
+    assert '안녕하세요 hello' in text['text'] and 'A picture of this page is attached' in text['text']
+
+
+def test_gemini_gets_the_page_picture_only_on_the_current_turn(monkeypatch):
+    capture = {}
+    monkeypatch.setenv('TUTOR_PROVIDER', 'gemini')
+    monkeypatch.setenv('GEMINI_API_KEY', 'AQ.test')
+    monkeypatch.delenv('GOOGLE_VERTEX_PROJECT', raising=False)
+    import requests
+    monkeypatch.setattr(requests, 'post', lambda url, params=None, json=None, timeout=None, headers=None: capture.update(body=json) or types.SimpleNamespace(status_code=200, json=lambda: {'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]}))
+    tutor.answer('What is in the picture?', 'Book', {'number': 2, 'text': 'x'},
+                 [{'role': 'user', 'content': 'earlier'}, {'role': 'assistant', 'content': 'reply'}], image=b'\x89PNG')
+    first, _, last = capture['body']['contents']
+    assert len(first['parts']) == 1                              # history stays text-only
+    assert last['parts'][1] == {'inlineData': {'mimeType': 'image/png', 'data': 'iVBORw=='}}
+
+
+def test_page_image_reads_the_reader_png_and_can_be_switched_off(tmp_path, monkeypatch):
+    (tmp_path / 'page-3.png').write_bytes(b'png-bytes')
+    assert tutor.page_image(tmp_path, 3) == b'png-bytes'
+    assert tutor.page_image(tmp_path, 4) is None                 # no picture for that page
+    monkeypatch.setattr(tutor, 'SEND_PAGE_IMAGE', False)
+    assert tutor.page_image(tmp_path, 3) is None
 
 
 def test_tutor_requires_sign_in_and_csrf(admin, client_user, monkeypatch):

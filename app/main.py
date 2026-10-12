@@ -561,7 +561,8 @@ def ask_tutor(job_id: str, body: TutorRequest, request: Request):
     if page is None:
         raise HTTPException(404, 'That page is not part of this course.')
     try:
-        return tutor.answer(body.question, job.get('title') or manifest.get('title', 'this textbook'), page, body.history, body.mode)
+        return tutor.answer(body.question, job.get('title') or manifest.get('title', 'this textbook'), page, body.history,
+                            body.mode, image=tutor.page_image(store.DATA / job_id / 'output', page['number']))
     except tutor.TutorError as exc:
         raise HTTPException(503, exc.message)
 
