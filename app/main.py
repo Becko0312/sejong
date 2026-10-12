@@ -107,6 +107,39 @@ def home():
     return FileResponse(STATIC / 'index.html')
 
 
+# ---- Android app (thin WebView shell, built from android/) ----
+# The signed APK is uploaded to the data disk (not baked into the image), with an optional
+# android.json {"version": "1.0"} next to it; the homepage shows a download box when it exists.
+ANDROID_APK = 'Book2Course.apk'
+
+
+def downloads_dir():
+    return store.DATA / 'downloads'
+
+
+@app.get('/api/app-download')
+def app_download():
+    path = downloads_dir() / ANDROID_APK
+    if not path.is_file():
+        return {'android': None}
+    try:
+        info = json.loads((downloads_dir() / 'android.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        info = {}
+    stat = path.stat()
+    return {'android': {'url': f'/download/{ANDROID_APK}', 'version': str(info.get('version') or ''),
+                        'size_mb': round(stat.st_size / 1e6, 1), 'updated': stat.st_mtime}}
+
+
+@app.get('/download/{name}')
+def download(name: str):
+    path = downloads_dir() / ANDROID_APK
+    if name != ANDROID_APK or not path.is_file():
+        raise HTTPException(404, 'File not found.')
+    return FileResponse(path, media_type='application/vnd.android.package-archive', filename=ANDROID_APK,
+                        headers={'Cache-Control': 'no-cache'})
+
+
 @app.get('/healthz')
 def health():
     with store.connect() as db:

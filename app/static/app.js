@@ -377,4 +377,16 @@ $('#plan-build').addEventListener('click', async () => {
 
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') clearTimeout(pollTimer); else if (me && me.role === 'admin') loadAdmin(); });
 setAuthMode('login');
+// Android app download box: shown when an APK is published, never inside the app itself.
+async function loadAppDownload() {
+  if (/Book2CourseApp\//.test(navigator.userAgent)) return;
+  const info = await fetch('/api/app-download').then((r) => r.json()).catch(() => ({}));
+  const apk = info.android;
+  if (!apk) return;
+  $('#apk-link').href = apk.url;
+  $('#apk-meta').textContent = [apk.version && `Version ${apk.version}`, `${apk.size_mb} MB`].filter(Boolean).join(' · ');
+  $('#app-download').hidden = false;
+}
+
 boot();
+loadAppDownload();

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Book2Course</string>
+    <string name="offline">No internet connection. Check your connection and tap to try again.</string>
+</resources>

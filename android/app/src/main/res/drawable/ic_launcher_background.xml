@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <!-- Book2Course brand green (same as the web app's favicon) -->
+    <solid android:color="#22483D" />
+</shape>

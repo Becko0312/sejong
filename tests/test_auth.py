@@ -53,3 +53,21 @@ def test_password_hash_roundtrip():
     assert auth.verify_password('correct horse battery', h)
     assert not auth.verify_password('wrong', h)
     assert h != auth.hash_password('correct horse battery')  # salted
+
+
+def test_android_app_download(env):
+    from fastapi.testclient import TestClient
+    from app import main
+    client = TestClient(main.app)                             # signed out: the download is public
+    tmp_path = env / 'downloads'
+    tmp_path.mkdir()
+    assert client.get('/api/app-download').json() == {'android': None}
+    assert client.get('/download/Book2Course.apk').status_code == 404
+    (tmp_path / 'Book2Course.apk').write_bytes(b'PK' + b'0' * 1_200_000)
+    (tmp_path / 'android.json').write_text('{"version": "1.0"}')
+    info = client.get('/api/app-download').json()['android']
+    assert info['url'] == '/download/Book2Course.apk' and info['version'] == '1.0' and info['size_mb'] == 1.2
+    res = client.get('/download/Book2Course.apk')
+    assert res.status_code == 200 and res.headers['content-type'] == 'application/vnd.android.package-archive'
+    assert 'Book2Course.apk' in res.headers['content-disposition']
+    assert client.get('/download/other.apk').status_code == 404

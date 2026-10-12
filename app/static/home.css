@@ -140,3 +140,19 @@ h1,h2{font-family:Georgia,serif;font-weight:400;letter-spacing:-.5px}
 .cost-tables td{padding:5px 4px;border-bottom:1px solid #eef1ea;font-variant-numeric:tabular-nums}
 .cost-tables th:not(:first-child),.cost-tables td:not(:first-child){text-align:right}
 @media (max-width:760px){.tiles{grid-template-columns:repeat(2,1fr)}.cost-tables{grid-template-columns:1fr}.costs-note#costs-updated{display:none}}
+
+/* Android app download */
+.app-download{display:flex;gap:16px;align-items:flex-start;margin:28px 0;padding:20px 24px;background:#fff;border:1px solid #dfe5da;border-radius:14px;box-shadow:0 10px 40px rgba(40,60,45,.05)}
+.app-download[hidden]{display:none}
+.app-download-icon{font-size:34px;line-height:1}
+.app-download-body{flex:1;min-width:0}
+.app-download h2{font-size:18px;margin:0 0 4px;color:#20463a}
+.app-download p{margin:0 0 12px;font-size:14px;color:#5c6a5c;line-height:1.6}
+.apk-button{display:inline-block;background:#22483d;color:#fff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:10px}
+.apk-button:hover{background:#1a382f}
+.apk-meta{margin-left:10px;font-size:12px;color:#6d846e}
+.apk-guide{margin-top:12px;font-size:13px;color:#4c5b4c}
+.apk-guide summary{cursor:pointer;color:#22483d;font-weight:600}
+.apk-guide ol{margin:10px 0 6px;padding-left:20px;line-height:1.7}
+.apk-note{font-size:12px;color:#6d846e}
+@media (max-width:640px){.app-download{margin:20px 0;padding:16px}.apk-meta{display:block;margin:8px 0 0}}
