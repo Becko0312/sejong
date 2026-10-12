@@ -586,7 +586,8 @@ async def live_ws(ws: WebSocket, job_id: str):
         start = await asyncio.wait_for(ws.receive_json(), timeout=10)
     except (asyncio.TimeoutError, WebSocketDisconnect, Exception):
         return
-    page = tutor.locate_page(read_manifest(job_id), int(start.get('page', 1) or 1))
+    manifest = read_manifest(job_id)
+    page = tutor.locate_page(manifest, int(start.get('page', 1) or 1))
     if page is None:
         await ws.send_json({'type': 'error', 'detail': 'That page is not part of this course.'})
         return
@@ -622,9 +623,17 @@ async def live_ws(ws: WebSocket, job_id: str):
                 return
             reserved += more
 
+    # The tutor sees the page picture, and follows the student when they turn the page.
+    output_dir = store.DATA / job_id / 'output'
+
+    def load_page(number):
+        found = tutor.locate_page(manifest, number)
+        return (found, live.page_image(output_dir, number)) if found else None
+
     talk = asyncio.ensure_future(live.proxy(
         ws.send_json, messages(), job.get('title') or 'this course', page, usage,
-        lang.for_course(job.get('source_lang'), job.get('target_lang'), job.get('languages'))))
+        lang.for_course(job.get('source_lang'), job.get('target_lang'), job.get('languages')),
+        image=live.page_image(output_dir, page['number']), load_page=load_page))
     billing_task = None if admin else asyncio.ensure_future(meter())
     try:
         done, _ = await asyncio.wait({t for t in (talk, billing_task) if t}, timeout=live.MAX_SECONDS,

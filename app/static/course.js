@@ -197,6 +197,7 @@ function show(number) {
   if (cur) cur.scrollIntoView({ block: 'nearest' });
   el.stage.scrollTop = 0;
   if (state.tutor.enabled) el.teachActions.hidden = false;
+  livePageTurn(number);
   maybeTeachLesson(page);
   applyView();
 }
@@ -774,7 +775,7 @@ window.addEventListener('resize', applyZoom);
 const b64ToInt16 = (b64) => { const bin = atob(b64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); return new Int16Array(bytes.buffer); };
 const int16ToB64 = (buf) => { const bytes = new Uint8Array(buf); let s = ''; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return btoa(s); };
 
-const live = { active: false, timer: null, ws: null, capCtx: null, playCtx: null, stream: null, playNode: null, lastRole: null };
+const live = { active: false, timer: null, pageTimer: null, ws: null, capCtx: null, playCtx: null, stream: null, playNode: null, lastRole: null };
 
 function vStatus(text, cls) { el.voiceStatus.textContent = text; el.voice.className = 'voice-overlay' + (cls ? ' ' + cls : ''); }
 function vLine(role, text) {
@@ -834,7 +835,17 @@ async function startLive() {
   }
 }
 
+// In a Live talk the tutor follows the student to a new page. Wait until they stop flipping.
+function livePageTurn(number) {
+  if (!live.active) return;
+  clearTimeout(live.pageTimer);
+  live.pageTimer = setTimeout(() => {
+    if (live.ws && live.ws.readyState === 1) live.ws.send(JSON.stringify({ type: 'page', page: number }));
+  }, 1200);
+}
+
 function stopLive() {
+  clearTimeout(live.pageTimer);
   live.active = false;
   clearInterval(live.timer); live.timer = null; el.voiceTimer.hidden = true;
   el.voice.hidden = true;

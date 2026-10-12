@@ -280,3 +280,59 @@ def test_openai_reconnect_replays_the_conversation(monkeypatch):
     assert 'CONVERSATION SO FAR' in resumed and 'Student: Hello' in resumed and 'Tutor: Hi there' in resumed
     assert all('Өнөөдрийн' not in json.dumps(m) for m in second.sent[1:])   # no second greeting
     assert second.sent[1]['item']['content'][0]['text'] == 'still there?'
+
+
+def test_gemini_sees_the_page_picture_and_follows_page_turns(monkeypatch):
+    conn = FakeGemini()
+    conn.send = None                                   # replaced below: keep the stream open
+    sent = []
+
+    async def record(raw):
+        sent.append(json.loads(raw))
+    conn.send = record
+    monkeypatch.setattr(live.websockets, 'connect', lambda *a, **k: conn)
+    pages = {4: ({'number': 4, 'text': '감사합니다'}, b'page4')}
+
+    async def client_send(msg):
+        pass
+
+    async def client_messages():
+        await asyncio.sleep(0.05)
+        yield {'type': 'page', 'page': 3}              # same page: ignored
+        yield {'type': 'page', 'page': 99}             # not in the course: ignored
+        yield {'type': 'page', 'page': 4}
+        await asyncio.sleep(0.05)
+        conn.incoming.put_nowait(None)
+
+    asyncio.run(live.proxy(client_send, client_messages(), 'Korean 1', {'number': 3, 'text': '안녕하세요'},
+                           image=b'page3', load_page=pages.get))
+    turns = [m['clientContent']['turns'][0]['parts'] for m in sent if 'clientContent' in m]
+    assert len(turns) == 2
+    kickoff, turn = turns
+    assert 'Сайн байна уу?' in kickoff[0]['text'] and 'A picture of the page is attached' in kickoff[0]['text']
+    assert kickoff[1] == {'inlineData': {'mimeType': 'image/png', 'data': 'cGFnZTM='}}
+    assert 'turned to page 4' in turn[0]['text'] and '감사합니다' in turn[0]['text']
+    assert turn[1] == {'inlineData': {'mimeType': 'image/png', 'data': 'cGFnZTQ='}}
+
+
+def test_openai_gets_the_page_picture_as_input_image(monkeypatch):
+    conn = FakeRealtime([], stay_open=True)
+    use_openai(monkeypatch, [conn])
+    pages = {4: ({'number': 4, 'text': 'x'}, None)}    # a page without a picture still turns
+
+    async def client_send(msg):
+        pass
+
+    async def client_messages():
+        await asyncio.sleep(0.05)
+        yield {'type': 'page', 'page': 4}
+        await asyncio.sleep(0.05)
+        conn.incoming.put_nowait(None)
+
+    asyncio.run(live.proxy(client_send, client_messages(), 'Korean 1', {'number': 3, 'text': 'y'},
+                           image=b'page3', load_page=pages.get))
+    kickoff = conn.sent[1]['item']['content']
+    assert kickoff[1] == {'type': 'input_image', 'image_url': 'data:image/png;base64,cGFnZTM='}
+    kinds = [m['type'] for m in conn.sent]
+    assert kinds[-3:] == ['response.cancel', 'conversation.item.create', 'response.create']
+    assert len(conn.sent[-2]['item']['content']) == 1 and 'turned to page 4' in conn.sent[-2]['item']['content'][0]['text']
