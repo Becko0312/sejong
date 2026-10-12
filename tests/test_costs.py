@@ -112,3 +112,31 @@ def test_costs_endpoint_is_admin_only(admin, monkeypatch):
     assert client.get('/api/admin/costs').status_code == 401
     client.post('/api/register', json={'username': 'student1', 'password': 'student-password-1'})
     assert client.get('/api/admin/costs').status_code == 403
+
+
+def test_a_failed_refresh_keeps_the_last_good_numbers(monkeypatch):
+    fake_azure(monkeypatch)
+    good = costs.azure_snapshot(now=1000.0)
+    def limited(*a, **k):
+        raise costs.AzureError('Azure is rate-limiting cost queries; try again in a minute.')
+    monkeypatch.setattr(costs, '_http', limited)
+    snap = costs.azure_snapshot(force=True, now=2000.0)
+    assert snap['costs'] == good['costs'] and snap['credit'] == good['credit']
+    assert len(snap['errors']) == 2
+    calls = []
+    monkeypatch.setattr(costs, '_http', lambda *a, **k: calls.append(1) or limited())
+    costs.azure_snapshot(now=2030.0)
+    assert calls == []                                  # still within the 60 s retry window
+    costs.azure_snapshot(now=2061.0)
+    assert calls                                        # failures are retried after a minute
+
+
+def test_rate_limited_queries_wait_and_retry(monkeypatch):
+    import requests
+    replies = [types.SimpleNamespace(status_code=429, headers={'x-ms-ratelimit-microsoft.costmanagement-clienttype-retry-after': '2'}, content=b''),
+               types.SimpleNamespace(status_code=200, headers={}, content=b'{}', json=lambda: {'ok': True})]
+    sent, slept = [], []
+    monkeypatch.setattr(requests, 'request', lambda method, url, json=None, headers=None, timeout=None: sent.append(headers) or replies.pop(0))
+    monkeypatch.setattr(costs.time, 'sleep', slept.append)
+    assert costs._http('POST', 'https://x', 'tok', {}) == {'ok': True}
+    assert slept == [2.0] and sent[0]['ClientType'] == 'book2course-cost-meter'

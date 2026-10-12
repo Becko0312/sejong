@@ -39,6 +39,7 @@ FEATURES = {'tutor': 'Text tutor', 'live': 'Live voice', 'interactive': 'Interac
 MANAGEMENT = 'https://management.azure.com'
 IMDS = 'http://169.254.169.254/metadata'
 CACHE_SECONDS = int(os.getenv('COST_CACHE_SECONDS', '600'))
+ERROR_RETRY_SECONDS = 60
 _cache = {'at': 0.0, 'data': None}
 _lock = threading.Lock()
 
@@ -125,13 +126,19 @@ class AzureError(Exception):
 
 def _http(method, url, token=None, json_body=None, headers=None, timeout=20):
     import requests
-    hdrs = dict(headers or {})
+    # Cost Management throttles per ClientType; unnamed callers share a tiny quota.
+    hdrs = {'ClientType': 'book2course-cost-meter', **(headers or {})}
     if token:
         hdrs['Authorization'] = f'Bearer {token}'
-    try:
-        response = requests.request(method, url, json=json_body, headers=hdrs, timeout=timeout)
-    except requests.RequestException as exc:
-        raise AzureError('Azure is not reachable right now.') from exc
+    for attempt in range(3):
+        try:
+            response = requests.request(method, url, json=json_body, headers=hdrs, timeout=timeout)
+        except requests.RequestException as exc:
+            raise AzureError('Azure is not reachable right now.') from exc
+        if response.status_code != 429 or attempt == 2:
+            break
+        wait = max((_seconds(v) for k, v in response.headers.items() if 'retry-after' in k.lower()), default=5)
+        time.sleep(min(wait, 10))
     if response.status_code in (401, 403):
         raise AzureError('The server is not allowed to read Azure costs yet (needs Cost Management Reader / '
                          'Billing profile reader).')
@@ -140,6 +147,13 @@ def _http(method, url, token=None, json_body=None, headers=None, timeout=20):
     if response.status_code >= 400:
         raise AzureError(f'Azure returned HTTP {response.status_code}.')
     return response.json() if response.content else {}
+
+
+def _seconds(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 5
 
 
 def _token():
@@ -254,8 +268,11 @@ def azure_snapshot(force=False, now=None):
     """Azure costs + credit, cached (Cost Management is rate-limited and updates a few times a day)."""
     now = now or time.time()
     with _lock:
-        if not force and _cache['data'] and now - _cache['at'] < CACHE_SECONDS:
-            return _cache['data']
+        cached = _cache['data']
+        # A failed check is retried sooner than a good one is refreshed.
+        ttl = ERROR_RETRY_SECONDS if cached and cached['errors'] else CACHE_SECONDS
+        if not force and cached and now - _cache['at'] < ttl:
+            return cached
     data = {'checked': now, 'costs': None, 'credit': None, 'errors': []}
     try:
         token = _token()
@@ -267,6 +284,9 @@ def azure_snapshot(force=False, now=None):
                 data['errors'].append(f'{key}: {exc}')
     except AzureError as exc:
         data['errors'].append(str(exc))
+    for key in ('costs', 'credit'):
+        if data[key] is None and cached and cached.get(key):
+            data[key] = cached[key]          # keep showing the last good numbers
     with _lock:
         _cache.update(at=now, data=data)
     return data
