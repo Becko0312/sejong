@@ -156,3 +156,19 @@ h1,h2{font-family:Georgia,serif;font-weight:400;letter-spacing:-.5px}
 .apk-guide ol{margin:10px 0 6px;padding-left:20px;line-height:1.7}
 .apk-note{font-size:12px;color:#6d846e}
 @media (max-width:640px){.app-download{margin:20px 0;padding:16px}.apk-meta{display:block;margin:8px 0 0}}
+
+/* Admin: students' Live minutes */
+.students{margin-top:24px}
+.students-tools{display:flex;gap:8px;align-items:center}
+.students-tools input{width:180px;padding:7px 10px;font-size:12px}
+.table-wrap{overflow-x:auto;margin-top:12px}
+.students-table{width:100%;border-collapse:collapse;font-size:13px}
+.students-table th{text-align:left;font-size:11px;font-weight:600;color:#6d846e;padding:8px 10px;border-bottom:1px solid #dfe5da;white-space:nowrap}
+.students-table td{padding:8px 10px;border-bottom:1px solid #eef1ea;white-space:nowrap}
+.students-table td.who{font-weight:600;color:#20463a}
+.students-table td.zero{color:#a5462f;font-weight:600}
+.students-table td.empty{color:#7a8577;text-align:center;padding:18px}
+.grant{display:flex;gap:6px;align-items:center;margin:0}
+.grant input{width:72px;padding:6px 8px;font-size:12px;margin:0}
+.grant button{padding:6px 12px;font-size:12px}
+@media (max-width:640px){.students .view-head{flex-wrap:wrap;gap:8px}.students-tools input{width:130px}}

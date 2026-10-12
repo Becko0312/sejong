@@ -160,3 +160,17 @@ def test_checkout_without_paylink_config(client_user, monkeypatch):
     assert c.get('/api/billing').json()['paylink'] is False
     assert c.post('/api/billing/checkout', json={'package': '30min'}, headers=hc).status_code == 503
     assert c.post('/api/billing/checkout', json={'package': 'nope'}, headers=hc).status_code == 400
+
+
+def test_admin_lists_students_and_adds_free_minutes(admin, client_user, monkeypatch):
+    a, ha = admin
+    c, hc = client_user
+    info = a.get('/api/admin/users').json()
+    assert info['free_minutes'] == 10
+    assert [u['username'] for u in info['users']] == ['student1']          # admins are not listed
+    assert info['users'][0]['seconds'] == 600 and info['users'][0]['used_seconds'] == 0
+    assert a.post('/api/admin/live-credit', json={'username': 'student1', 'minutes': 20}, headers=ha).json()['seconds'] == 1800
+    assert a.get('/api/admin/users').json()['users'][0]['seconds'] == 1800
+    assert c.get('/api/billing').json()['seconds'] == 1800                # the student sees it right away
+    assert c.get('/api/admin/users').status_code == 403
+    assert a.post('/api/admin/live-credit', json={'username': 'nobody', 'minutes': 5}, headers=ha).status_code == 404

@@ -29,7 +29,7 @@ function render() {
   if (me && me.authenticated) {
     box.innerHTML = `<span class="role">${escape(me.role)}</span><span>${escape(me.username)}</span><button class="ghost" id="logout">Log out</button>`;
     $('#logout').addEventListener('click', logout);
-    if (me.role === 'admin') { show('admin-view'); fillLanguages(); loadAdmin(); loadCosts(); } else { show('client-view'); loadCatalog(); }
+    if (me.role === 'admin') { show('admin-view'); fillLanguages(); loadAdmin(); loadCosts(); loadStudents(); } else { show('client-view'); loadCatalog(); }
   } else {
     box.innerHTML = '';
     show('auth-view');
@@ -387,6 +387,54 @@ async function loadAppDownload() {
   $('#apk-meta').textContent = [apk.version && `Version ${apk.version}`, `${apk.size_mb} MB`].filter(Boolean).join(' · ');
   $('#app-download').hidden = false;
 }
+
+// ---- Admin: give students extra free Live minutes ----
+let students = [];
+const fmtMin = (sec) => `${Math.floor(sec / 60)} min`;
+const fmtDay = (t) => (t ? new Date(t * 1000).toLocaleDateString() : '—');
+
+async function loadStudents() {
+  try {
+    const data = await api('/api/admin/users');
+    students = data.users;
+    $('#students-note').textContent = `Every new student starts with ${data.free_minutes} free minutes. Add more here — they are added to what the student has left.`;
+    renderStudents();
+  } catch (err) { $('#students-msg').textContent = err.message; $('#students-msg').className = 'msg err'; }
+}
+
+function renderStudents() {
+  const q = $('#student-search').value.trim().toLowerCase();
+  const shown = students.filter((u) => u.username.toLowerCase().includes(q));
+  $('#student-count').textContent = String(students.length);
+  $('#student-rows').innerHTML = shown.length ? shown.map((u) => `
+    <tr>
+      <td class="who">${escape(u.username)}</td>
+      <td>${fmtDay(u.created)}</td>
+      <td class="${u.seconds <= 0 ? 'zero' : ''}">${fmtMin(u.seconds)}</td>
+      <td>${fmtMin(u.used_seconds)}</td>
+      <td><form class="grant" data-user="${escape(u.username)}">
+        <input type="number" min="1" max="10000" step="1" value="10" aria-label="Minutes to add for ${escape(u.username)}" required>
+        <button type="submit">+ Add</button>
+      </form></td>
+    </tr>`).join('') : `<tr><td colspan="5" class="empty">${students.length ? 'No student matches that search.' : 'No students yet.'}</td></tr>`;
+}
+
+$('#student-search').addEventListener('input', renderStudents);
+$('#students-refresh').addEventListener('click', loadStudents);
+$('#student-rows').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target, username = form.dataset.user, minutes = Number(form.querySelector('input').value);
+  const msg = $('#students-msg');
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 10000) { msg.textContent = 'Enter a whole number of minutes (1–10000).'; msg.className = 'msg err'; return; }
+  form.querySelector('button').disabled = true;
+  try {
+    const res = await api('/api/admin/live-credit', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': me.csrf }, body: JSON.stringify({ username, minutes }) });
+    const u = students.find((x) => x.username === username);
+    if (u) u.seconds = res.seconds;
+    renderStudents();
+    msg.textContent = `Added ${minutes} min to ${username} — now ${fmtMin(res.seconds)} left.`; msg.className = 'msg ok';
+  } catch (err) { msg.textContent = err.message; msg.className = 'msg err'; form.querySelector('button').disabled = false; }
+});
 
 boot();
 loadAppDownload();

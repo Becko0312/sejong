@@ -727,6 +727,20 @@ def billing_checkout(body: CheckoutRequest, request: Request):
         raise HTTPException(exc.code, exc.message)
 
 
+@app.get('/api/admin/users')
+def admin_users(request: Request):
+    """Students with their Live minutes left and used, for the admin's 'add free minutes' panel."""
+    require_admin(request, csrf=False)
+    with store.connect() as db:
+        rows = db.execute(
+            "SELECT u.username, u.created, u.live_seconds, COALESCE(SUM(s.seconds), 0) AS used, MAX(s.created) AS last_live "
+            "FROM users u LEFT JOIN live_sessions s ON s.username = u.username "
+            "WHERE u.role != 'admin' GROUP BY u.username ORDER BY u.created DESC").fetchall()
+    return {'free_minutes': billing.FREE_SECONDS // 60,
+            'users': [{'username': r['username'], 'created': r['created'], 'seconds': max(0, int(r['live_seconds'] or 0)),
+                       'used_seconds': int(r['used'] or 0), 'last_live': r['last_live']} for r in rows]}
+
+
 @app.post('/api/admin/live-credit')
 def admin_live_credit(body: GrantRequest, request: Request):
     # Manual top-up (e.g. bank transfer) or correction, in minutes; negative removes time.

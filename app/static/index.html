@@ -111,6 +111,21 @@
         <div id="admin-list" aria-live="polite"></div>
       </section>
     </div>
+    <section class="panel students" aria-labelledby="students-title">
+      <div class="view-head">
+        <h2 id="students-title">Students · Live minutes <span id="student-count" class="count">0</span></h2>
+        <div class="students-tools">
+          <input id="student-search" type="search" placeholder="Search username" aria-label="Search students" autocomplete="off">
+          <button class="ghost" id="students-refresh" type="button">↻ Refresh</button>
+        </div>
+      </div>
+      <p class="costs-note" id="students-note">Give a student extra free Live voice minutes. They are added to what the student has left.</p>
+      <div class="table-wrap"><table class="students-table">
+        <thead><tr><th>Student</th><th>Joined</th><th>Minutes left</th><th>Used</th><th>Add free minutes</th></tr></thead>
+        <tbody id="student-rows"></tbody>
+      </table></div>
+      <p id="students-msg" class="msg" role="status" aria-live="polite"></p>
+    </section>
   </section>
 </main>
 
