@@ -789,6 +789,8 @@ async function startLive() {
   live.active = true; live.lastRole = null;
   el.voice.hidden = false; el.voiceTranscript.innerHTML = ''; vStatus('Connecting…');
   document.getElementById('app').classList.add('live-active');
+  // Phones: the voice UI is a bottom bar; keep the page clear of it and start at the top.
+  if (window.matchMedia('(max-width: 819.98px)').matches) { window.scrollTo(0, 0); fitVoiceBar(); }
   el.liveBtn.classList.add('active');
   try {
     live.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
@@ -834,6 +836,13 @@ async function startLive() {
     setTimeout(stopLive, 2500);
   }
 }
+
+// The phone bottom bar grows with the transcript; pad the page by its real height.
+function fitVoiceBar() {
+  const h = el.voice.hidden ? 0 : el.voice.getBoundingClientRect().height;
+  document.getElementById('app').style.setProperty('--voice-bar-h', `${Math.round(h)}px`);
+}
+if (window.ResizeObserver) new ResizeObserver(fitVoiceBar).observe(el.voice);
 
 // In a Live talk the tutor follows the student to a new page. Wait until they stop flipping.
 function livePageTurn(number) {

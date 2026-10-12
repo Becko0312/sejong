@@ -188,7 +188,7 @@ button:disabled{opacity:.5;cursor:default}
 /* Split-screen live voice: TOC on the left, voice UI in the middle, book on the right */
 @media(min-width:820px){
   #app.live-active{grid-template-columns:190px 260px 1fr;grid-template-rows:100vh}
-  #app.live-active .tutor{display:none}
+  #app.live-active #tutor{display:none}
   /* Pin every panel to row 1: a column-only placement lets grid auto-flow wrap the voice panel onto a new row */
   #app.live-active .toc{grid-area:1/1}
   #app.live-active .voice-overlay{position:static;inset:auto;z-index:auto;height:100vh;grid-area:1/2}
@@ -213,4 +213,23 @@ button:disabled{opacity:.5;cursor:default}
 .zoom-ctl #zoom-reset{font-size:12px;min-width:54px}
 @media(min-width:820px) and (max-width:1080px){
   #app.live-active{grid-template-columns:160px 220px 1fr}
+}
+
+/* Phones: Live voice is a compact bar at the bottom, so the book stays visible and pages can
+   be turned during the talk (the tutor follows the page). TOC, text tutor and page text hide. */
+@media(max-width:819.98px){
+  #app.live-active .toc,#app.live-active #tutor,#app.live-active .page-text,#app.live-active .view-switch{display:none}
+  #app.live-active .reader-bar{position:sticky;top:0;z-index:20;flex-wrap:nowrap;padding:6px 10px;min-height:48px}
+  #app.live-active .stage{padding:10px 8px calc(var(--voice-bar-h,150px) + 14px)}
+  #app.live-active .voice-overlay{inset:auto 0 0 0;align-items:stretch;border-radius:16px 16px 0 0;box-shadow:0 -8px 24px rgba(10,20,15,.25);padding-bottom:env(safe-area-inset-bottom)}
+  #app.live-active .voice-inner{display:grid;grid-template-columns:auto 1fr auto;grid-template-areas:"orb status end" "orb timer end" "tr tr tr";align-items:center;gap:2px 12px;padding:10px 12px;width:100%;max-width:none;text-align:left}
+  #app.live-active .orb{grid-area:orb;width:46px;height:46px}
+  #app.live-active .orb-icon{font-size:20px}
+  #app.live-active .voice-status{grid-area:status;font-size:13px;align-self:end}
+  #app.live-active .voice-timer{grid-area:timer;justify-self:start;align-self:start;padding:1px 8px;font-size:11px}
+  #app.live-active .voice-end{grid-area:end;padding:8px 12px;font-size:12px}
+  #app.live-active .voice-transcript{grid-area:tr;max-height:16vh;margin-top:8px;font-size:12px;padding:8px;gap:6px}
+  #app.live-active .voice-transcript .vt{padding:6px 10px}
+  #app.live-active .voice-hint{display:none}
+  @keyframes orb-listen{0%,100%{box-shadow:0 0 0 0 rgba(143,214,172,.45)}50%{box-shadow:0 0 0 10px rgba(143,214,172,0)}}
 }
