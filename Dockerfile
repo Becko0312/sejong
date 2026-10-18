@@ -38,6 +38,7 @@ CMD ["python", "-m", "app.cloud_job"]
 FROM worker AS app
 USER root
 COPY deploy/start.sh /usr/local/bin/start.sh
-RUN chmod +x /usr/local/bin/start.sh
+# Strip Windows line endings in case the image is built from a Windows checkout.
+RUN sed -i 's/\r$//' /usr/local/bin/start.sh && chmod +x /usr/local/bin/start.sh
 EXPOSE 8000
 CMD ["/usr/local/bin/start.sh"]
